@@ -1,20 +1,20 @@
 # LAV SC2 Human Joiner
 
-Minimal console prototype for a human player's PC on the same LAN as a LAV
-StarCraft II host.
+[English](README.md)
 
-This project is separate from `LAV_v0.2`. It does not run LAV and does not
-modify SC2AIApp or Sc2LadderServer.
+LAV StarCraft II Host와 같은 LAN에 있는 사람 플레이어 PC에서 사용하는 최소 콘솔 프로토타입입니다.
 
-## Requirements
+이 프로젝트는 `LAV_v0.2`와 분리되어 있습니다. LAV를 실행하지 않고, `SC2AIApp` 또는 `Sc2LadderServer`를 수정하지 않습니다.
+
+## 요구 사항
 
 - Windows
 - Python 3.14
-- StarCraft II installed on the human player's PC
-- Standard library only for the console tool
-- Optional Gradio dependency for the GUI
+- 사람 플레이어 PC에 설치된 StarCraft II
+- 콘솔 도구는 Python 표준 라이브러리만 사용
+- GUI 사용 시 선택적으로 Gradio 의존성 필요
 
-## Initial Setup
+## 초기 설정
 
 ```bat
 cd /d C:\Vtuber_Souorce_Code\StarCraft2\LAV_SC2_HumanJoiner
@@ -23,59 +23,57 @@ py -3.14 -m venv .venv
 python --version
 ```
 
-## What It Does
+## 기능
 
-- Listens for LAV StarCraft II LAN lobby broadcasts on UDP port `47624`.
-- Parses `lav.sc2.lan_room` payloads with protocol version `1`.
-- Keeps one current entry per `room_id` and `source_id`.
-- Removes rooms after their advertised TTL expires.
-- Finds `SC2_x64.exe` on the human PC.
-- Prints the command and environment that would be used later.
+- UDP `47624` 포트에서 LAV StarCraft II LAN 로비 broadcast를 수신합니다.
+- protocol version `1`의 `lav.sc2.lan_room` payload를 파싱합니다.
+- `room_id`와 `source_id` 기준으로 현재 방 목록을 유지합니다.
+- 방이 advertise한 TTL이 지나면 목록에서 제거합니다.
+- 사람 PC에서 `SC2_x64.exe`를 찾습니다.
+- 이후 실행에 사용할 command와 environment를 미리 보여줍니다.
 
-The console tool intentionally does not:
+콘솔 도구가 의도적으로 하지 않는 일:
 
-- install third-party packages,
-- use `python-sc2` or `burnysc2`,
-- automate mouse or keyboard input,
-- package an executable.
+- third-party package 설치
+- `python-sc2` 또는 `burnysc2` 사용
+- 마우스 또는 키보드 입력 자동화
+- 실행 파일 패키징
 
-The Gradio GUI can launch StarCraft II only when the user presses `Join Game`.
-It does not automate mouse or keyboard input.
+Gradio GUI는 사용자가 `Join Game`을 눌렀을 때만 StarCraft II를 실행할 수 있습니다. 마우스 또는 키보드 입력 자동화는 하지 않습니다.
 
-## Usage
+## 사용법
 
 ```bat
 python human_joiner.py scan
 ```
 
-Optional scan settings:
+scan 옵션:
 
 ```bat
 python human_joiner.py scan --seconds 15 --port 47624
 ```
 
-Check an advertised or manually entered host before launching:
+advertise된 host 또는 직접 입력한 host를 실행 전에 확인:
 
 ```bat
 python human_joiner.py check --host 192.168.0.67 --proxy-ports 5677,5678
 ```
 
-By default, `check` and `join` use the first proxy port as the human slot
-port. Use `--check-all-ports` only for diagnostics.
+기본적으로 `check`와 `join`은 첫 번째 proxy port를 사람 플레이어 slot port로 사용합니다. 진단 목적일 때만 `--check-all-ports`를 사용하세요.
 
-Launch StarCraft II for the first discovered room:
+처음 발견된 방으로 StarCraft II 실행:
 
 ```bat
 python human_joiner.py join --seconds 15
 ```
 
-Launch StarCraft II when UDP discovery is blocked but you know the LAV host IP:
+UDP discovery가 막혀 있지만 LAV Host IP를 알고 있을 때 StarCraft II 실행:
 
 ```bat
 python human_joiner.py join --host 192.168.0.67 --proxy-ports 5677,5678
 ```
 
-Example output:
+출력 예시:
 
 ```text
 Found LAV StarCraft II room
@@ -94,40 +92,39 @@ Environment:
   LAV_SC2_ROOM_ID=...
 ```
 
-If StarCraft II is not found, the joiner still prints the room and reports that
-the executable could not be located.
+StarCraft II를 찾지 못해도 joiner는 방 정보를 출력하고, 실행 파일 위치를 찾지 못했다고 알려줍니다.
 
 ## Gradio GUI
 
-Install the optional GUI dependency:
+선택 GUI 의존성 설치:
 
 ```bat
 .venv\Scripts\activate
 python -m pip install -r requirements-gradio.txt
 ```
 
-Run the GUI:
+GUI 실행:
 
 ```bat
 python human_joiner_gui.py
 ```
 
-The GUI provides:
+GUI 제공 기능:
 
-- `Scan LAN` to find LAV StarCraft II rooms.
-- `Check Proxy` to test the advertised TCP proxy ports.
-- `Join Game` to launch `SC2_x64.exe` with the selected room environment.
-- `Settings` to load, edit, and save the local `SC2_x64.exe` path.
+- `Scan LAN`: LAV StarCraft II 방 찾기
+- `Check Proxy`: advertise된 TCP proxy port 확인
+- `Join Game`: 선택한 방 environment로 `SC2_x64.exe` 실행
+- `Settings`: 로컬 `SC2_x64.exe` 경로 불러오기, 수정, 저장
 
-The browser UI is local by default at `http://127.0.0.1:47860`.
+브라우저 UI는 기본적으로 로컬 주소 `http://127.0.0.1:47860`에서 열립니다.
 
-Local GUI settings are stored in:
+로컬 GUI 설정 저장 위치:
 
 ```text
 config\human_joiner_config.json
 ```
 
-Example:
+예시:
 
 ```json
 {
@@ -139,7 +136,7 @@ Example:
 }
 ```
 
-## LAN Lobby Payload
+## LAN 로비 Payload
 
 ```json
 {
@@ -161,9 +158,8 @@ Example:
 }
 ```
 
-## Tests
+## 테스트
 
 ```bat
 python -m unittest
 ```
-# LAV_SC2_HumanJoiner
