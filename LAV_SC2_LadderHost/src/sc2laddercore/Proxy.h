@@ -77,6 +77,8 @@ class Proxy
     Proxy(const uint32_t maxGameLoops, const uint32_t maxRealGameTime, const BotConfig& botConfig);
 
     bool ConnectToSC2Instance(const sc2::ProcessSettings & processSettings, const int portServer, const int portClient);
+    bool ConnectToSC2Client(const std::string& host, const int portClient);
+    void startProxyServer(const int portServer);
     void startSC2Instance(const sc2::ProcessSettings& processSettings, const int portServer, const int portClient);
     bool setupGame(const sc2::ProcessSettings& processSettings, const std::string& map, const bool realTimeMode, const sc2::Race bot1Race, const sc2::Race bot2Race);
     bool startBot(const int portServer, const int portStart, const std::string & opponentPlayerId);

@@ -30,6 +30,7 @@ from sc2_join_launcher import (
 from sc2_lan_discovery_client import (
     DEFAULT_DISCOVERY_PORT,
     DEFAULT_JOIN_PORT,
+    DEFAULT_HUMAN_CLIENT_PORT,
     DEFAULT_SCAN_SECONDS,
     LAV_LAN_ROOM_PROTOCOL,
     LAV_LAN_ROOM_VERSION,
@@ -454,17 +455,14 @@ def join_selected_room(
         logger.warning("GUI join skipped; SC2_x64.exe not found")
         return "SC2_x64.exe was not found. Set a valid SC2_x64.exe path in Settings.", ""
 
-    checks = check_proxy_ports(room)
-    proxy_status = _render_port_checks(checks)
-    if not checks or not all(check.reachable for check in checks):
-        logger.warning("GUI join aborted; one or more Scan LAN proxy ports are unreachable")
-        return "Join aborted because one or more Scan LAN proxy ports are unreachable.", proxy_status
-
     logger.info("GUI join requested; room_id=%s source_id=%s sc2_executable=%s", room.room_id, room.source_id, sc2_executable)
     plan = build_launch_plan(human_slot_room(room), sc2_executable)
     process = launch_sc2(plan)
     logger.info("GUI join launch process started; pid=%s command=%s", process.pid, plan.command)
-    return f"StarCraft II launch requested. PID: {process.pid}", proxy_status
+    return (
+        f"StarCraft II launch requested. PID: {process.pid}",
+        _render_remote_human_launch_note(room),
+    )
 
 
 def use_manual_host(
@@ -551,18 +549,6 @@ def join_manual_room(
             _state_with_manual_room(state, room),
         )
 
-    checks = check_proxy_ports(room)
-    proxy_status = _render_port_checks(checks)
-    if not checks or not all(check.reachable for check in checks):
-        logger.warning("GUI manual join aborted; one or more proxy ports are unreachable")
-        return (
-            _render_room_details(room, sc2_executable, "Manual LAV StarCraft II target"),
-            _render_launch_preview(room, sc2_executable),
-            "Join aborted because one or more manual proxy ports are unreachable.",
-            proxy_status,
-            _state_with_manual_room(state, room),
-        )
-
     logger.info("GUI manual join requested; host=%s ports=%s sc2_executable=%s", room.proxy_host, room.proxy_ports, sc2_executable)
     plan = build_launch_plan(human_slot_room(room), sc2_executable)
     process = launch_sc2(plan)
@@ -571,7 +557,7 @@ def join_manual_room(
         _render_room_details(room, sc2_executable, "Manual LAV StarCraft II target"),
         _render_launch_preview(room, sc2_executable),
         f"StarCraft II launch requested. PID: {process.pid}",
-        proxy_status,
+        _render_remote_human_launch_note(room),
         _state_with_manual_room(state, room),
     )
 
@@ -680,6 +666,7 @@ def _manual_room_from_inputs(
             proxy_ports=ports,
             start_port=start_port,
             join_port=join_port,
+            human_client_port=DEFAULT_HUMAN_CLIENT_PORT,
         ),
         "",
     )
@@ -792,6 +779,7 @@ def _render_room_details(room: LanRoom, sc2_executable: object, title: str) -> s
             f"Proxy ports: {','.join(str(port) for port in room.proxy_ports)}",
             f"Start port: {room.start_port if room.start_port is not None else ''}",
             f"Join port: {room.join_port if room.join_port is not None else DEFAULT_JOIN_PORT}",
+            f"Human SC2 API port: {room.human_client_port if room.human_client_port is not None else DEFAULT_HUMAN_CLIENT_PORT}",
             f"SC2 executable: {sc2_executable or 'not found'}",
         ]
     )
@@ -820,7 +808,7 @@ def _render_launch_preview(room: LanRoom, sc2_executable: object) -> str:
     probe_host = select_room_connect_host(room)
     lines = [
         "SC2 launch command:",
-        f"  {build_command_preview(sc2_executable)}",
+        f"  {build_command_preview(sc2_executable, human_slot_room(room) if sc2_executable is not None else None)}",
         "Connection environment:",
     ]
     for name, value in build_environment_preview(human_slot_room(room)).items():
@@ -857,6 +845,17 @@ def _render_port_checks(checks: list[PortCheck]) -> str:
             target = f"{check.host}:{check.port}" if check.port else check.host
             lines.append(f"FAILED {target} {check.error}".rstrip())
     return "\n".join(lines)
+
+
+def _render_remote_human_launch_note(room: LanRoom) -> str:
+    port = room.human_client_port if room.human_client_port is not None else DEFAULT_HUMAN_CLIENT_PORT
+    return "\n".join(
+        [
+            "Remote human SC2 API listener",
+            f"Local listen: 0.0.0.0:{port}",
+            "Host proxy ports are diagnostic only for this mode.",
+        ]
+    )
 
 
 def _room_label(index: int, room: LanRoom) -> str:

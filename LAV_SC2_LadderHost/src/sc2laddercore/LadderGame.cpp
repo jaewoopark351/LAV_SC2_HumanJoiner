@@ -72,7 +72,7 @@ void LadderGame::LogStartGame(const BotConfig &Bot1, const BotConfig &Bot2)
     writeStartLog(Bot2, Bot1.BotName);
 }
 
-GameResult LadderGame::StartGame(const BotConfig &Agent1, const BotConfig &Agent2, const std::string &Map)
+GameResult LadderGame::StartGame(const BotConfig &Agent1, const BotConfig &Agent2, const std::string &Map, const std::string &RemoteHumanHost, int RemoteHumanClientPort)
 {
     LogStartGame(Agent1, Agent2);
     // Proxy init
@@ -87,10 +87,22 @@ GameResult LadderGame::StartGame(const BotConfig &Agent1, const BotConfig &Agent
     constexpr int portServerBot2 = 5678;
     constexpr int portClientBot1 = 5679;
     constexpr int portClientBot2 = 5680;
+    const bool useRemoteHuman1 = Agent1.Type == BotType::Human && !RemoteHumanHost.empty() && RemoteHumanClientPort > 0;
     PrintThread {} << "Starting the StarCraft II clients." << std::endl;
-    proxyBot1.startSC2Instance(process_settings, portServerBot1, portClientBot1);
+    if (useRemoteHuman1)
+    {
+        //20260709_kpopmodder: In remote-human mode the human SC2 process is launched by LAV_SC2_HumanJoiner on the other PC.
+        PrintThread {} << "Using remote human SC2 client at " << RemoteHumanHost << ":" << RemoteHumanClientPort << "." << std::endl;
+        proxyBot1.startProxyServer(portServerBot1);
+    }
+    else
+    {
+        proxyBot1.startSC2Instance(process_settings, portServerBot1, portClientBot1);
+    }
     proxyBot2.startSC2Instance(process_settings, portServerBot2, portClientBot2);
-    const bool startSC2InstanceSuccessful1 = proxyBot1.ConnectToSC2Instance(process_settings, portServerBot1, portClientBot1);
+    const bool startSC2InstanceSuccessful1 = useRemoteHuman1
+        ? proxyBot1.ConnectToSC2Client(RemoteHumanHost, RemoteHumanClientPort)
+        : proxyBot1.ConnectToSC2Instance(process_settings, portServerBot1, portClientBot1);
     const bool startSC2InstanceSuccessful2 = proxyBot2.ConnectToSC2Instance(process_settings, portServerBot2, portClientBot2);
     if (!startSC2InstanceSuccessful1 || !startSC2InstanceSuccessful2)
     {

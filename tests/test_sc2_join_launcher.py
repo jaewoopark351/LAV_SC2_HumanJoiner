@@ -26,6 +26,7 @@ def sample_room() -> LanRoom:
         proxy_host="192.168.0.67",
         proxy_ports=[5677, 5678],
         start_port=5690,
+        human_client_port=5679,
     )
 
 
@@ -38,6 +39,8 @@ class Sc2JoinLauncherTest(unittest.TestCase):
         self.assertEqual(env["LAV_SC2_ROOM_ID"], "room-1")
         self.assertEqual(env["LAV_SC2_SOURCE_ID"], "source-1")
         self.assertEqual(env["LAV_SC2_START_PORT"], "5690")
+        self.assertEqual(env["LAV_SC2_HUMAN_CLIENT_HOST"], "0.0.0.0")
+        self.assertEqual(env["LAV_SC2_HUMAN_CLIENT_PORT"], "5679")
 
     def test_build_environment_preview_uses_loopback_sender_for_same_pc_scan(self) -> None:
         room = sample_room()
@@ -62,7 +65,10 @@ class Sc2JoinLauncherTest(unittest.TestCase):
 
         plan = build_launch_plan(sample_room(), executable)
 
-        self.assertEqual(plan.command, [str(executable)])
+        self.assertEqual(
+            plan.command,
+            [str(executable), "-listen", "0.0.0.0", "-port", "5679", "-displayMode", "0"],
+        )
         self.assertEqual(plan.environment_overrides["LAV_SC2_PROXY_HOST"], "192.168.0.67")
 
     def test_human_slot_room_uses_first_proxy_port(self) -> None:

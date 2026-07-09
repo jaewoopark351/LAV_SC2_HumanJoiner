@@ -8,6 +8,7 @@ import human_joiner_gui
 from human_joiner_config import HumanJoinerConfig
 from sc2_join_launcher import PortCheck
 from sc2_lan_discovery_client import (
+    DEFAULT_HUMAN_CLIENT_PORT,
     DEFAULT_JOIN_PORT,
     LAV_LAN_ROOM_PROTOCOL,
     LAV_LAN_ROOM_VERSION,
@@ -29,6 +30,7 @@ def sample_room() -> LanRoom:
         proxy_ports=[5677, 5678],
         start_port=5690,
         join_port=DEFAULT_JOIN_PORT,
+        human_client_port=DEFAULT_HUMAN_CLIENT_PORT,
     )
 
 
@@ -64,6 +66,7 @@ class HumanJoinerGuiTest(unittest.TestCase):
         self.assertIn("SC2 launch command:", preview)
         self.assertIn("LAV_SC2_PROXY_HOST=26.189.202.71", preview)
         self.assertIn("LAV_SC2_PROXY_PORTS=5677", preview)
+        self.assertIn("-listen 0.0.0.0 -port 5679", preview)
         self.assertIn("26.189.202.71:5678", preview)
         self.assertEqual(status, "Manual host target ready.")
         self.assertEqual(proxy_status, "")
@@ -125,7 +128,6 @@ class HumanJoinerGuiTest(unittest.TestCase):
         with (
             patch("human_joiner_gui.find_sc2_executable", return_value=None),
             patch.object(Path, "is_file", autospec=True, side_effect=lambda path: path == configured_path),
-            patch("human_joiner_gui.check_proxy_ports", return_value=checks),
             patch("human_joiner_gui.launch_sc2", return_value=process) as launch_sc2,
         ):
             _, preview, status, _, _ = human_joiner_gui.join_manual_room(
@@ -137,7 +139,10 @@ class HumanJoinerGuiTest(unittest.TestCase):
             )
 
         plan = launch_sc2.call_args.args[0]
-        self.assertEqual(plan.command, [str(configured_path)])
+        self.assertEqual(
+            plan.command,
+            [str(configured_path), "-listen", "0.0.0.0", "-port", "5679", "-displayMode", "0"],
+        )
         self.assertIn(str(configured_path), preview)
         self.assertIn("StarCraft II launch requested. PID: 1234", status)
 
@@ -258,16 +263,11 @@ class HumanJoinerGuiTest(unittest.TestCase):
         self.assertIn("Accepted: True", lobby_status)
         self.assertEqual(new_state["joined_room"], room)
 
-    def test_join_manual_room_checks_ports_before_launch(self) -> None:
-        checks = [
-            PortCheck("26.189.202.71", 5677, True),
-            PortCheck("26.189.202.71", 5678, True),
-        ]
+    def test_join_manual_room_launches_remote_human_listener_without_proxy_check(self) -> None:
         process = Mock(pid=1234)
 
         with (
             patch("human_joiner_gui.find_sc2_executable", return_value=Path(r"C:\SC2\SC2_x64.exe")),
-            patch("human_joiner_gui.check_proxy_ports", return_value=checks) as check_proxy_ports,
             patch("human_joiner_gui.launch_sc2", return_value=process) as launch_sc2,
         ):
             _, _, status, proxy_status, _ = human_joiner_gui.join_manual_room(
@@ -277,21 +277,20 @@ class HumanJoinerGuiTest(unittest.TestCase):
                 {},
             )
 
-        checked_room = check_proxy_ports.call_args.args[0]
         plan = launch_sc2.call_args.args[0]
-        self.assertEqual(checked_room.proxy_ports, [5677, 5678])
         self.assertEqual(plan.environment_overrides["LAV_SC2_PROXY_PORTS"], "5677")
+        self.assertEqual(plan.command[-6:], ["-listen", "0.0.0.0", "-port", "5679", "-displayMode", "0"])
         self.assertIn("StarCraft II launch requested. PID: 1234", status)
-        self.assertIn("OK 26.189.202.71:5677", proxy_status)
-        self.assertIn("OK 26.189.202.71:5678", proxy_status)
+        self.assertIn("Local listen: 0.0.0.0:5679", proxy_status)
 
-    def test_join_manual_room_stops_when_proxy_is_unreachable(self) -> None:
+    def test_join_manual_room_ignores_unreachable_proxy_for_remote_human_mode(self) -> None:
         checks = [PortCheck("26.189.202.71", 5677, False, "timed out")]
+        process = Mock(pid=1234)
 
         with (
             patch("human_joiner_gui.find_sc2_executable", return_value=Path(r"C:\SC2\SC2_x64.exe")),
             patch("human_joiner_gui.check_proxy_ports", return_value=checks),
-            patch("human_joiner_gui.launch_sc2") as launch_sc2,
+            patch("human_joiner_gui.launch_sc2", return_value=process) as launch_sc2,
         ):
             _, _, status, proxy_status, _ = human_joiner_gui.join_manual_room(
                 "26.189.202.71",
@@ -300,9 +299,9 @@ class HumanJoinerGuiTest(unittest.TestCase):
                 {},
             )
 
-        self.assertIn("Join aborted", status)
-        self.assertIn("FAILED 26.189.202.71:5677 timed out", proxy_status)
-        launch_sc2.assert_not_called()
+        self.assertIn("StarCraft II launch requested. PID: 1234", status)
+        self.assertIn("Host proxy ports are diagnostic only", proxy_status)
+        launch_sc2.assert_called_once()
 
 
 if __name__ == "__main__":

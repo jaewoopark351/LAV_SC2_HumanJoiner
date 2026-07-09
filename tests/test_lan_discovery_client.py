@@ -30,6 +30,7 @@ def sample_payload(**overrides: object) -> str:
         "proxy_ports": [5677, 5678],
         "start_port": 5690,
         "join_port": DEFAULT_JOIN_PORT,
+        "human_client_port": 5679,
         "room_state": "waiting",
         "timestamp": 0,
         "expires_sec": 10,
@@ -50,6 +51,7 @@ class ParseLavLanRoomPayloadTest(unittest.TestCase):
         self.assertEqual(room.proxy_ports, [5677, 5678])
         self.assertEqual(room.start_port, 5690)
         self.assertEqual(room.join_port, DEFAULT_JOIN_PORT)
+        self.assertEqual(room.human_client_port, 5679)
         self.assertEqual(room.room_state, "waiting")
         self.assertEqual(room.last_seen, 100.0)
         self.assertEqual(room.sender_ip, "192.168.0.67")

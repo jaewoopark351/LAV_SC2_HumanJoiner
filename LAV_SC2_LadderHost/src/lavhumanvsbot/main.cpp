@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <cstdlib>
 #include <string>
 
 #include "AgentsConfig.h"
@@ -57,6 +58,7 @@ void printUsage()
         << "LavHumanVsBot - local human vs ProBots launcher\n"
         << "Usage:\n"
         << "  LavHumanVsBot.exe --human-name LAVHuman --bot changeling --map IncorporealAIE_v4 --race Terran --bot-dir Bots --config HumanLadder.json --realtime\n\n"
+        << "  Remote human slot: --remote-human-host 192.168.0.20 --remote-human-client-port 5679\n\n"
         << "SC2PATH should point to the full SC2_x64.exe path. LAV injects that environment value before launch.\n";
 }
 }
@@ -75,6 +77,8 @@ int main(int argc, char** argv)
     const std::string raceName = argValue(argc, argv, "--race", "Terran");
     const std::string botDirectory = argValue(argc, argv, "--bot-dir", "Bots");
     const std::string configPath = argValue(argc, argv, "--config", "HumanLadder.json");
+    const std::string remoteHumanHost = argValue(argc, argv, "--remote-human-host", "");
+    const int remoteHumanClientPort = std::atoi(argValue(argc, argv, "--remote-human-client-port", "5679").c_str());
     const bool realtime = !hasArg(argc, argv, "--no-realtime");
 
     LadderConfig config(configPath);
@@ -104,11 +108,16 @@ int main(int argc, char** argv)
 
     std::cout << "[LavHumanVsBot] Starting " << human.BotName << " vs " << bot.BotName
               << " on " << mapName << " race=" << GetRaceString(human.Race)
-              << " realtime=" << (realtime ? "true" : "false") << std::endl;
+              << " realtime=" << (realtime ? "true" : "false");
+    if (!remoteHumanHost.empty() && remoteHumanClientPort > 0)
+    {
+        std::cout << " remote-human=" << remoteHumanHost << ":" << remoteHumanClientPort;
+    }
+    std::cout << std::endl;
 
     LadderGame game(argc, argv, &config);
     game.SetRealTime(realtime);
-    GameResult result = game.StartGame(human, bot, mapName);
+    GameResult result = game.StartGame(human, bot, mapName, remoteHumanHost, remoteHumanClientPort);
     std::cout << "[LavHumanVsBot] Finished with result: " << GetResultType(result.Result) << std::endl;
 
     if (result.Result == ResultType::InitializationError || result.Result == ResultType::Error)

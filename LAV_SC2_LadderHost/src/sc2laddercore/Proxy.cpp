@@ -72,8 +72,7 @@ Proxy::~Proxy()
 }
 void Proxy::startSC2Instance(const sc2::ProcessSettings& processSettings, const int portServer, const int portClient)
 {
-    // magic numbers
-    m_server.Listen(std::to_string(portServer).c_str(), "100000", "100000", "5");
+    startProxyServer(portServer);
 
     m_gameClientPid = sc2::StartProcess(processSettings.process_path,
         { "-listen", m_localHost,
@@ -84,17 +83,32 @@ void Proxy::startSC2Instance(const sc2::ProcessSettings& processSettings, const 
 
 bool Proxy::ConnectToSC2Instance(const sc2::ProcessSettings& processSettings, const int portServer, const int portClient)
 {
+    return ConnectToSC2Client(m_localHost, portClient);
+}
+
+void Proxy::startProxyServer(const int portServer)
+{
+    // magic numbers
+    m_server.Listen(std::to_string(portServer).c_str(), "100000", "100000", "5");
+}
+
+bool Proxy::ConnectToSC2Client(const std::string& host, const int portClient)
+{
     // Depending on the hardware the client sometimes needs a second or two.
     size_t connectionAttempts = 0;
     constexpr size_t abandonConnectionAttemptAfter = 60;  // sec
     constexpr bool withDebugOutput = false;
-    while (!m_client.Connect(m_localHost, portClient, withDebugOutput))
+    const std::string connectHost = host.empty() ? m_localHost : host;
+    PrintThread{} << "Connecting proxy for " << m_botConfig.BotName << " to SC2 client "
+                  << connectHost << ":" << portClient << std::endl;
+    while (!m_client.Connect(connectHost, portClient, withDebugOutput))
     {
         ++connectionAttempts;
         sc2::SleepFor(1000);
         if (connectionAttempts > abandonConnectionAttemptAfter)
         {
-            PrintThread{} << "Failed to connect to client (" << m_botConfig.BotName << ")" << std::endl;
+            PrintThread{} << "Failed to connect to client (" << m_botConfig.BotName << ") at "
+                          << connectHost << ":" << portClient << std::endl;
             return false;
         }
     }

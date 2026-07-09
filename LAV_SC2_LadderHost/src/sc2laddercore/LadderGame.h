@@ -11,7 +11,7 @@ class LadderGame
 {
 public:
     LadderGame(int InCoordinatorArgc, char** InCoordinatorArgv, LadderConfig *InConfig);
-    GameResult StartGame(const BotConfig & Agent1, const BotConfig & Agent2, const std::string & Map);
+    GameResult StartGame(const BotConfig & Agent1, const BotConfig & Agent2, const std::string & Map, const std::string & RemoteHumanHost = "", int RemoteHumanClientPort = 0);
     void SetRealTime(bool InRealTime);
 
 

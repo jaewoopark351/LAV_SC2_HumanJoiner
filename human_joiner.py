@@ -78,7 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
     join_parser.add_argument(
         "--skip-proxy-check",
         action="store_true",
-        help="launch even when proxy ports have not been checked first",
+        help="legacy option; remote human mode launches without requiring proxy port checks",
+    )
+    join_parser.add_argument(
+        "--require-proxy-check",
+        action="store_true",
+        help="require the advertised proxy port to be reachable before launching",
     )
 
     lobby_parser = subparsers.add_parser("lobby", help="send a lobby join request without launching StarCraft II")
@@ -167,7 +172,7 @@ def join_command(args: argparse.Namespace) -> int:
         print("SC2_x64.exe was not found. Install StarCraft II or add a path finder fallback first.")
         return 3
 
-    if not bool(args.skip_proxy_check):
+    if bool(getattr(args, "require_proxy_check", False)) and not bool(args.skip_proxy_check):
         join_room = human_slot_room(room)
         checks = check_proxy_ports(join_room)
         print("Proxy check")
@@ -213,11 +218,12 @@ def print_room(room: LanRoom, sc2_executable: Path | None) -> None:
     print(f"Map: {room.preferred_map}")
     print(f"Proxy ports: {','.join(str(port) for port in room.proxy_ports)}")
     print(f"Join port: {room.join_port or DEFAULT_JOIN_PORT}")
+    print(f"Human SC2 API port: {room.human_client_port or 5679}")
     _print_sc2_status(sc2_executable)
 
     print()
     print("Launch preview")
-    command = build_command_preview(sc2_executable)
+    command = build_command_preview(sc2_executable, human_slot_room(room) if sc2_executable is not None else None)
     print(f"Command: {command}")
     print("Environment:")
     for name, value in build_environment_preview(room).items():
@@ -244,6 +250,7 @@ def resolve_room(args: argparse.Namespace) -> LanRoom | None:
             proxy_ports=ports,
             start_port=int(getattr(args, "start_port", DEFAULT_MANUAL_START_PORT) or DEFAULT_MANUAL_START_PORT),
             join_port=int(getattr(args, "join_port", DEFAULT_MANUAL_JOIN_PORT) or DEFAULT_MANUAL_JOIN_PORT),
+            human_client_port=5679,
         )
 
     duration = _safe_float(getattr(args, "seconds", DEFAULT_SCAN_SECONDS), DEFAULT_SCAN_SECONDS)

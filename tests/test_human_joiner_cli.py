@@ -84,14 +84,36 @@ class HumanJoinerCliTest(unittest.TestCase):
         self.assertIn("StarCraft II launch requested. PID: 1234", output)
         launch_sc2.assert_called_once()
 
-    def test_join_manual_host_stops_when_proxy_is_unreachable(self) -> None:
+    def test_join_manual_host_launches_even_when_proxy_is_unreachable_by_default(self) -> None:
+        checks = [PortCheck("192.168.0.67", 5677, False, "timed out")]
+        process = Mock(pid=1234)
+
+        with patch("human_joiner.find_sc2_executable", return_value=Path(r"C:\SC2\SC2_x64.exe")):
+            with patch("human_joiner.check_proxy_ports", return_value=checks):
+                with patch("human_joiner.launch_sc2", return_value=process) as launch_sc2:
+                    code, output = self._run_cli(
+                        ["join", "--host", "192.168.0.67", "--proxy-ports", "5677"]
+                    )
+
+        self.assertEqual(code, 0)
+        self.assertIn("StarCraft II launch requested. PID: 1234", output)
+        launch_sc2.assert_called_once()
+
+    def test_join_manual_host_can_require_proxy_check(self) -> None:
         checks = [PortCheck("192.168.0.67", 5677, False, "timed out")]
 
         with patch("human_joiner.find_sc2_executable", return_value=Path(r"C:\SC2\SC2_x64.exe")):
             with patch("human_joiner.check_proxy_ports", return_value=checks):
                 with patch("human_joiner.launch_sc2") as launch_sc2:
                     code, output = self._run_cli(
-                        ["join", "--host", "192.168.0.67", "--proxy-ports", "5677"]
+                        [
+                            "join",
+                            "--host",
+                            "192.168.0.67",
+                            "--proxy-ports",
+                            "5677",
+                            "--require-proxy-check",
+                        ]
                     )
 
         self.assertEqual(code, 2)

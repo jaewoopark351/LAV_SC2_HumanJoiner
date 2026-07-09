@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 DEFAULT_DISCOVERY_PORT = 47624
 DEFAULT_JOIN_PORT = DEFAULT_DISCOVERY_PORT + 1
+DEFAULT_HUMAN_CLIENT_PORT = 5679
 DEFAULT_SCAN_SECONDS = 10.0
 DEFAULT_SOCKET_TIMEOUT_SECONDS = 0.5
 DEFAULT_ROOM_TTL_SECONDS = 10.0
@@ -45,6 +46,7 @@ class LanRoom:
     proxy_ports: list[int] = field(default_factory=list)
     start_port: int | None = None
     join_port: int | None = None
+    human_client_port: int | None = None
     room_state: str = ""
     timestamp: float = 0.0
     expires_sec: float = DEFAULT_ROOM_TTL_SECONDS
@@ -211,6 +213,7 @@ def parse_lav_lan_room_payload(
         proxy_ports=_integer_list(data.get("proxy_ports", []), "proxy_ports"),
         start_port=_optional_integer(data, "start_port"),
         join_port=_optional_integer(data, "join_port"),
+        human_client_port=_optional_integer(data, "human_client_port"),
         room_state=_optional_string(data, "room_state"),
         timestamp=_optional_float(data, "timestamp", 0.0),
         expires_sec=_positive_float(data.get("expires_sec", DEFAULT_ROOM_TTL_SECONDS), "expires_sec"),
@@ -372,6 +375,7 @@ def send_lobby_join(
         "host_name": socket.gethostname(),
         "proxy_host": room.proxy_host,
         "proxy_ports": list(room.proxy_ports),
+        "human_client_port": room.human_client_port or DEFAULT_HUMAN_CLIENT_PORT,
         "timestamp": time.time(),
     }
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
