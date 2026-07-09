@@ -24,6 +24,7 @@ from sc2_lan_discovery_client import (
     LanScanDiagnostics,
     LanRoom,
     LobbyJoinResult,
+    select_room_connect_host,
     send_lobby_join,
 )
 from sc2_path_finder import find_sc2_executable
@@ -201,13 +202,13 @@ def print_room(room: LanRoom, sc2_executable: Path | None) -> None:
         "Room found; room_id=%s source_id=%s host=%s ports=%s bot=%s map=%s",
         room.room_id,
         room.source_id,
-        room.proxy_host or room.sender_ip or room.host_name,
+        select_room_connect_host(room) or room.proxy_host or room.sender_ip or room.host_name,
         ",".join(str(port) for port in room.proxy_ports),
         room.preferred_bot,
         room.preferred_map,
     )
     print("Found LAV StarCraft II room")
-    print(f"Host: {room.proxy_host or room.sender_ip or room.host_name}")
+    print(f"Host: {select_room_connect_host(room) or room.proxy_host or room.sender_ip or room.host_name}")
     print(f"Bot: {room.preferred_bot}")
     print(f"Map: {room.preferred_map}")
     print(f"Proxy ports: {','.join(str(port) for port in room.proxy_ports)}")

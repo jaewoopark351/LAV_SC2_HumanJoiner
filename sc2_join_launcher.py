@@ -6,7 +6,7 @@ import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from sc2_lan_discovery_client import LanRoom
+from sc2_lan_discovery_client import LanRoom, select_room_connect_host
 from sc2_path_finder import find_sc2_executable
 
 
@@ -32,7 +32,7 @@ def build_command_preview(sc2_executable: Path | None) -> str:
 
 def build_environment_preview(room: LanRoom) -> dict[str, str]:
     env = {
-        "LAV_SC2_PROXY_HOST": room.proxy_host or room.sender_ip,
+        "LAV_SC2_PROXY_HOST": select_room_connect_host(room),
         "LAV_SC2_PROXY_PORTS": ",".join(str(port) for port in room.proxy_ports),
         "LAV_SC2_ROOM_ID": room.room_id,
         "LAV_SC2_SOURCE_ID": room.source_id,
@@ -66,7 +66,7 @@ def launch_sc2(
 
 
 def check_proxy_ports(room: LanRoom, *, timeout_sec: float = 1.0) -> list[PortCheck]:
-    host = room.proxy_host or room.sender_ip
+    host = select_room_connect_host(room)
     if not host:
         return [PortCheck(host="", port=0, reachable=False, error="proxy host is missing")]
 

@@ -350,7 +350,7 @@ def send_lobby_join(
     target_host: str | None = None,
     target_port: int | None = None,
 ) -> LobbyJoinResult:
-    host = str(target_host or room.sender_ip or room.proxy_host or room.host_name or "").strip()
+    host = select_lobby_join_host(room, target_host=target_host)
     port = int(target_port or room.join_port or DEFAULT_JOIN_PORT)
     request_client_id = str(client_id or uuid.uuid4().hex)
     if not host:
@@ -420,6 +420,45 @@ def send_lobby_join(
         ack=ack,
         error="" if bool(ack.get("ok")) else str(ack.get("message") or "join rejected"),
     )
+
+
+def select_lobby_join_host(room: LanRoom, *, target_host: str | None = None) -> str:
+    if target_host is not None:
+        return _clean_connect_host(target_host)
+    return select_room_connect_host(room)
+
+
+def select_room_connect_host(room: LanRoom) -> str:
+    sender_ip = _clean_connect_host(room.sender_ip)
+    proxy_host = _clean_connect_host(room.proxy_host)
+    host_name = _clean_connect_host(room.host_name)
+
+    if _is_loopback_host(sender_ip):
+        return sender_ip
+    if proxy_host and not _is_loopback_host(proxy_host):
+        return proxy_host
+    if sender_ip:
+        return sender_ip
+    if proxy_host:
+        return proxy_host
+    return host_name
+
+
+def _clean_connect_host(value: object) -> str:
+    text = str(value or "").strip()
+    if _is_unspecified_host(text):
+        return ""
+    return text
+
+
+def _is_unspecified_host(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    return not text or text in {"0.0.0.0", "::", "[::]"}
+
+
+def _is_loopback_host(value: str) -> bool:
+    text = str(value or "").strip().lower()
+    return text == "localhost" or text.startswith("127.") or text in {"::1", "[::1]"}
 
 
 def _enable_address_reuse(sock: socket.socket) -> None:

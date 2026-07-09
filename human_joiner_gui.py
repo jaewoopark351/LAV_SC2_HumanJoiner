@@ -37,6 +37,7 @@ from sc2_lan_discovery_client import (
     LanScanDiagnostics,
     LanRoom,
     LobbyJoinResult,
+    select_room_connect_host,
     send_lobby_join,
 )
 from sc2_path_finder import find_sc2_executable
@@ -398,7 +399,7 @@ def check_selected_proxy(selected_label: str | None, state: dict[str, Any]) -> s
         logger.info("GUI proxy check skipped; no room selected")
         return "No Scan LAN room selected."
 
-    logger.info("GUI proxy check started; room_id=%s host=%s ports=%s", room.room_id, room.proxy_host or room.sender_ip, room.proxy_ports)
+    logger.info("GUI proxy check started; room_id=%s host=%s ports=%s", room.room_id, select_room_connect_host(room), room.proxy_ports)
     checks = check_proxy_ports(room)
     for check in checks:
         logger.info(
@@ -425,7 +426,7 @@ def join_selected_lobby(
         "GUI lobby join requested; room_id=%s source_id=%s target=%s:%s",
         room.room_id,
         room.source_id,
-        room.sender_ip or room.proxy_host or room.host_name,
+        select_room_connect_host(room),
         room.join_port or DEFAULT_JOIN_PORT,
     )
     result = send_lobby_join(room, player_name=str(player_name or "Human"))
@@ -780,7 +781,7 @@ def _format_counts(values: dict[str, int]) -> str:
 
 
 def _render_room_details(room: LanRoom, sc2_executable: object, title: str) -> str:
-    host = room.proxy_host or room.sender_ip or room.host_name
+    host = select_room_connect_host(room) or room.proxy_host or room.sender_ip or room.host_name
     return "\n".join(
         [
             title,
@@ -816,7 +817,7 @@ def _render_lobby_join_result(result: LobbyJoinResult) -> str:
 
 
 def _render_launch_preview(room: LanRoom, sc2_executable: object) -> str:
-    probe_host = room.proxy_host or room.sender_ip
+    probe_host = select_room_connect_host(room)
     lines = [
         "SC2 launch command:",
         f"  {build_command_preview(sc2_executable)}",
@@ -859,7 +860,7 @@ def _render_port_checks(checks: list[PortCheck]) -> str:
 
 
 def _room_label(index: int, room: LanRoom) -> str:
-    host = room.proxy_host or room.sender_ip or room.host_name or "unknown"
+    host = select_room_connect_host(room) or room.proxy_host or room.sender_ip or room.host_name or "unknown"
     bot = room.preferred_bot or "unknown bot"
     map_name = room.preferred_map or "unknown map"
     room_name = room.room_name or "LAV StarCraft II"
