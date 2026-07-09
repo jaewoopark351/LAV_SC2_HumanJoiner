@@ -1,0 +1,7 @@
+{
+  "sc2_executable_path": "C:\\Program Files (x86)\\StarCraft II\\Versions\\Base97425\\SC2_x64.exe",
+  "manual_host": "26.189.202.71",
+  "manual_proxy_ports": "5677,5678",
+  "manual_start_port": 5690,
+  "manual_join_port": 47625
+}

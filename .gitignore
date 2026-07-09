@@ -1,0 +1,5 @@
+.venv/
+.test_tmp/
+__pycache__/
+*.py[cod]
+logs/*.log

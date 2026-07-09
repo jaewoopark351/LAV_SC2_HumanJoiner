@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+from sc2_join_launcher import (
+    build_environment_preview,
+    build_launch_plan,
+    check_proxy_ports,
+    human_slot_room,
+    launch_sc2,
+)
+from sc2_lan_discovery_client import LanRoom
+
+
+def sample_room() -> LanRoom:
+    return LanRoom(
+        protocol="lav.sc2.lan_room",
+        version=1,
+        source_id="source-1",
+        room_id="room-1",
+        room_name="LAV StarCraft II",
+        preferred_bot="Changeling",
+        preferred_map="IncorporealAIE_v4",
+        proxy_host="192.168.0.67",
+        proxy_ports=[5677, 5678],
+        start_port=5690,
+    )
+
+
+class Sc2JoinLauncherTest(unittest.TestCase):
+    def test_build_environment_preview(self) -> None:
+        env = build_environment_preview(sample_room())
+
+        self.assertEqual(env["LAV_SC2_PROXY_HOST"], "192.168.0.67")
+        self.assertEqual(env["LAV_SC2_PROXY_PORTS"], "5677,5678")
+        self.assertEqual(env["LAV_SC2_ROOM_ID"], "room-1")
+        self.assertEqual(env["LAV_SC2_SOURCE_ID"], "source-1")
+        self.assertEqual(env["LAV_SC2_START_PORT"], "5690")
+
+    def test_build_launch_plan_uses_executable_and_env(self) -> None:
+        executable = Path(r"C:\StarCraft II\SC2_x64.exe")
+
+        plan = build_launch_plan(sample_room(), executable)
+
+        self.assertEqual(plan.command, [str(executable)])
+        self.assertEqual(plan.environment_overrides["LAV_SC2_PROXY_HOST"], "192.168.0.67")
+
+    def test_human_slot_room_uses_first_proxy_port(self) -> None:
+        room = human_slot_room(sample_room())
+
+        self.assertEqual(room.proxy_ports, [5677])
+
+    def test_launch_sc2_merges_environment(self) -> None:
+        process = Mock(pid=1234)
+        plan = build_launch_plan(sample_room(), Path(r"C:\StarCraft II\SC2_x64.exe"))
+
+        with patch("sc2_join_launcher.subprocess.Popen", return_value=process) as popen:
+            returned = launch_sc2(plan, base_env={"KEEP": "1"})
+
+        self.assertIs(returned, process)
+        popen.assert_called_once()
+        kwargs = popen.call_args.kwargs
+        self.assertEqual(kwargs["env"]["KEEP"], "1")
+        self.assertEqual(kwargs["env"]["LAV_SC2_PROXY_PORTS"], "5677,5678")
+
+    def test_check_proxy_ports_reports_socket_results(self) -> None:
+        room = sample_room()
+
+        with patch("sc2_join_launcher.socket.create_connection") as create_connection:
+            create_connection.return_value.__enter__.return_value = object()
+            checks = check_proxy_ports(room)
+
+        self.assertEqual([check.reachable for check in checks], [True, True])
+        self.assertEqual([check.port for check in checks], [5677, 5678])
+
+
+if __name__ == "__main__":
+    unittest.main()
