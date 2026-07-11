@@ -14,9 +14,9 @@ from sc2_join_launcher import build_launch_plan, human_client_port, human_slot_r
 from sc2_lan_port_relay import (
     SC2LanPortRelayManager,
     SC2UdpPortPairRelayManager,
+    derive_first_player_client_ports,
     derive_first_player_server_ports,
     derive_multiplayer_ports,
-    derive_second_player_client_ports,
     derive_second_player_server_ports,
     resolve_lan_bind_host,
 )
@@ -317,9 +317,11 @@ class RemoteHumanStartServer:
 
         peer_host = str(peer_host or select_room_connect_host(room) or "").strip()
         ports = derive_multiplayer_ports(room.start_port, room.multiplayer_relay_ports)
-        loopback_ports = derive_second_player_client_ports(room.start_port)
-        udp_local_ports = derive_second_player_server_ports(room.start_port)
-        udp_peer_ports = derive_first_player_server_ports(room.start_port)
+        #20260712_kpopmodder: LavLanSc2LadderServer now fixes the remote human as the first SC2 participant.
+        # Its loopback dials the host bot second-player server ports, while its UDP pair owns first-player server ports.
+        loopback_ports = derive_first_player_client_ports(room.start_port)
+        udp_local_ports = derive_first_player_server_ports(room.start_port)
+        udp_peer_ports = derive_second_player_server_ports(room.start_port)
         bind_host = resolve_lan_bind_host(
             room.multiplayer_relay_bind_host,
             peer_host=peer_host,
@@ -458,3 +460,4 @@ def _valid_port(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return port if 0 < port <= 65535 else default
+
