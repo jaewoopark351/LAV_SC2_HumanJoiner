@@ -444,6 +444,12 @@ def join_selected_lobby(
         logger.warning("GUI lobby join blocked by map sync failure; error=%s", map_sync.error)
         return "Map sync failed. Lobby join was not sent.", map_status, state or {}
 
+    if _is_same_joined_room(state, room):
+        logger.info("GUI lobby join skipped; room already joined room_id=%s source_id=%s", room.room_id, room.source_id)
+        listener_status = _start_remote_start_listener(room, sc2_path)
+        status = "Lobby already joined. Host can press Start Game / Ladder Proxy."
+        return status, "\n".join([map_status, "", "Lobby join skipped: already joined.", "", listener_status]), state or {}
+
     result = send_lobby_join(room, player_name=str(player_name or "Human"))
     lobby_status = _render_lobby_join_result(result)
     if not result.ok:
@@ -724,6 +730,15 @@ def _state_with_joined_room(
     new_state["joined_room"] = room
     new_state["lobby_join"] = result
     return new_state
+
+
+def _is_same_joined_room(state: dict[str, Any], room: LanRoom) -> bool:
+    if not isinstance(state, dict):
+        return False
+    joined = state.get("joined_room")
+    if not isinstance(joined, LanRoom):
+        return False
+    return joined.room_id == room.room_id and joined.source_id == room.source_id
 
 
 def _render_scan_error(port: int, error: OSError, diagnostics: LanScanDiagnostics) -> str:

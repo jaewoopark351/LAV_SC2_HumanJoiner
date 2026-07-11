@@ -273,6 +273,39 @@ class HumanJoinerGuiTest(unittest.TestCase):
         self.assertIn("Remote start listener", lobby_status)
         self.assertEqual(new_state["joined_room"], room)
 
+    def test_join_selected_lobby_skips_duplicate_join_for_same_room(self) -> None:
+        room = sample_room()
+        state = {
+            "rooms": [room],
+            "labels": ["room label"],
+            "manual_room": None,
+            "joined_room": room,
+            "lobby_join": LobbyJoinResult(
+                ok=True,
+                target_host="26.189.202.71",
+                target_port=DEFAULT_JOIN_PORT,
+                room_id="room-1",
+                client_id="client-1",
+            ),
+        }
+
+        with (
+            patch("human_joiner_gui.send_lobby_join") as send_lobby_join,
+            patch("human_joiner_gui._start_remote_start_listener", return_value="Remote start listener\nListen: 0.0.0.0:47626") as start_listener,
+        ):
+            status, lobby_status, new_state = human_joiner_gui.join_selected_lobby(
+                "room label",
+                "Tester",
+                state,
+                r"C:\SC2\SC2_x64.exe",
+            )
+
+        send_lobby_join.assert_not_called()
+        start_listener.assert_called_once()
+        self.assertIn("already joined", status)
+        self.assertIn("Lobby join skipped", lobby_status)
+        self.assertEqual(state, new_state)
+
     def test_join_selected_lobby_blocks_when_map_sync_fails(self) -> None:
         room = sample_room()
         room.map_file_name = "PersephoneLE.SC2Map"
