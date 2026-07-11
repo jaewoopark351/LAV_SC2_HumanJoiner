@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from sc2_api_probe import wait_for_sc2_api_ping
 from sc2_join_launcher import build_launch_plan, human_client_port, human_slot_room, launch_sc2
 from sc2_lan_discovery_client import (
     DEFAULT_HUMAN_CLIENT_PORT,
@@ -149,8 +150,18 @@ class RemoteHumanStartServer:
             return _ack(False, error="sc2_executable_missing", room_id=room.room_id)
 
         port = human_client_port(room)
-        if process is not None and process.poll() is None and _wait_for_port(port, timeout_sec=1.0):
-            return _ack(True, room_id=room.room_id, pid=process.pid, human_client_port=port, message="already_ready")
+        if process is not None and process.poll() is None:
+            probe = wait_for_sc2_api_ping(timeout_sec=1.0, port=port)
+            if probe.ok:
+                return _ack(
+                    True,
+                    room_id=room.room_id,
+                    pid=process.pid,
+                    human_client_port=port,
+                    message="already_ready",
+                    api_ready=True,
+                    api_ready_attempts=probe.attempts,
+                )
 
         try:
             plan = build_launch_plan(human_slot_room(room), sc2_executable)
@@ -163,14 +174,23 @@ class RemoteHumanStartServer:
         with self._lock:
             self._last_process = process
 
-        ready = _wait_for_port(port, timeout_sec=_request_timeout(payload, 30.0), process=process)
+        ready_timeout = _request_timeout(payload, 30.0)
+        ready_started = time.monotonic()
+        port_ready = _wait_for_port(port, timeout_sec=min(5.0, ready_timeout), process=process)
+        remaining_timeout = max(0.1, ready_timeout - (time.monotonic() - ready_started))
+        probe = wait_for_sc2_api_ping(timeout_sec=remaining_timeout, port=port) if port_ready else None
+        ready = bool(probe is not None and probe.ok)
         response = _ack(
             ready,
-            error="" if ready else "human_sc2_api_port_not_ready",
+            error="" if ready else "human_sc2_api_ping_not_ready",
             room_id=room.room_id,
             pid=getattr(process, "pid", None),
             human_client_port=port,
             peer=f"{address[0]}:{address[1]}",
+            port_ready=port_ready,
+            api_ready=ready,
+            api_ready_attempts=getattr(probe, "attempts", 0),
+            api_ready_error=getattr(probe, "error", "") if probe is not None else "human_sc2_api_port_not_ready",
         )
         self._last_status = response
         self.logger.info("Remote start request handled; response=%s", response)
