@@ -241,6 +241,35 @@ class HumanJoinerGuiTest(unittest.TestCase):
         checked_room = check_proxy_ports.call_args.args[0]
         self.assertEqual(checked_room.proxy_ports, [5677, 5678])
 
+    def test_prepare_selected_sc2_waits_for_api_ready(self) -> None:
+        room = sample_room()
+        state = {"rooms": [room], "labels": ["room label"], "manual_room": None}
+        result = {
+            "ok": True,
+            "pid": 1234,
+            "human_client_port": DEFAULT_HUMAN_CLIENT_PORT,
+            "port_ready": True,
+            "api_ready": True,
+            "api_ready_attempts": 4,
+        }
+
+        with (
+            patch("human_joiner_gui._resolve_sc2_executable", return_value=Path(r"C:\SC2\SC2_x64.exe")),
+            patch.object(human_joiner_gui._REMOTE_START_SERVER, "prepare_sc2", return_value=result) as prepare_sc2,
+        ):
+            status, details = human_joiner_gui.prepare_selected_sc2(
+                "room label",
+                state,
+                r"C:\SC2\SC2_x64.exe",
+            )
+
+        prepare_sc2.assert_called_once()
+        self.assertEqual(room, prepare_sc2.call_args.args[0])
+        self.assertIn("SC2 prepared", status)
+        self.assertIn("Port ready: True", details)
+        self.assertIn("API ready: True", details)
+        self.assertIn("API ready attempts: 4", details)
+
     def test_join_selected_lobby_sends_lobby_join_request(self) -> None:
         room = sample_room()
         state = {"rooms": [room], "labels": ["room label"], "manual_room": None}

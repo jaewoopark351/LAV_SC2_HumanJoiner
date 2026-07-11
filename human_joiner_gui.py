@@ -45,7 +45,7 @@ from sc2_lan_discovery_client import (
 )
 from sc2_map_downloader import MapSyncResult, ensure_room_map_file
 from sc2_path_finder import find_sc2_executable
-from sc2_remote_start_server import RemoteHumanStartServer
+from sc2_remote_start_server import DEFAULT_SC2_API_READY_TIMEOUT_SEC, RemoteHumanStartServer
 
 
 INSTALL_HELP = (
@@ -135,6 +135,7 @@ def build_app(gr: Any) -> Any:
                 with gr.Row():
                     scan_button = gr.Button("Scan LAN", variant="primary")
                     join_lobby_button = gr.Button("Join Lobby", variant="primary")
+                    prepare_sc2_button = gr.Button("Prepare SC2")
                     check_button = gr.Button("Check Proxy")
                     join_button = gr.Button("Join Game", variant="primary")
 
@@ -190,6 +191,11 @@ def build_app(gr: Any) -> Any:
             fn=join_selected_lobby,
             inputs=[room_choice, lobby_player_name, state, sc2_executable_path],
             outputs=[status, lobby_status, state],
+        )
+        prepare_sc2_button.click(
+            fn=prepare_selected_sc2,
+            inputs=[room_choice, state, sc2_executable_path],
+            outputs=[status, scan_proxy_status],
         )
         join_button.click(
             fn=join_selected_room,
@@ -416,6 +422,40 @@ def check_selected_proxy(selected_label: str | None, state: dict[str, Any]) -> s
             check.error,
         )
     return _render_port_checks(checks)
+
+
+def prepare_selected_sc2(
+    selected_label: str | None,
+    state: dict[str, Any],
+    sc2_path: object = "",
+) -> tuple[str, str]:
+    room = _selected_room(selected_label, state) or (state or {}).get("manual_room")
+    if room is None:
+        logger.info("GUI SC2 prepare skipped; no room selected")
+        return "No Scan LAN room selected.", ""
+
+    sc2_executable = _resolve_sc2_executable(sc2_path)
+    if sc2_executable is None:
+        logger.warning("GUI SC2 prepare skipped; SC2_x64.exe not found")
+        return "SC2_x64.exe was not found. Set a valid SC2_x64.exe path in Settings.", ""
+
+    logger.info(
+        "GUI SC2 prepare requested; room_id=%s source_id=%s sc2_executable=%s timeout_sec=%s",
+        room.room_id,
+        room.source_id,
+        sc2_executable,
+        DEFAULT_SC2_API_READY_TIMEOUT_SEC,
+    )
+    result = _REMOTE_START_SERVER.prepare_sc2(
+        room,
+        sc2_executable,
+        ready_timeout_sec=DEFAULT_SC2_API_READY_TIMEOUT_SEC,
+    )
+    if result.get("ok"):
+        status = "SC2 prepared. 5679 is listening and SC2 API Ping succeeded."
+    else:
+        status = f"SC2 prepare failed: {result.get('error', 'unknown_error')}"
+    return status, _render_sc2_prepare_result(result)
 
 
 def join_selected_lobby(
@@ -919,6 +959,32 @@ def _render_port_checks(checks: list[PortCheck]) -> str:
         else:
             target = f"{check.host}:{check.port}" if check.port else check.host
             lines.append(f"FAILED {target} {check.error}".rstrip())
+    return "\n".join(lines)
+
+
+def _render_sc2_prepare_result(result: dict[str, Any]) -> str:
+    lines = [
+        "SC2 prepare / warm-up result",
+        f"OK: {bool(result.get('ok'))}",
+    ]
+    if result.get("message"):
+        lines.append(f"Message: {result.get('message')}")
+    if result.get("error"):
+        lines.append(f"Error: {result.get('error')}")
+    if result.get("pid") is not None:
+        lines.append(f"PID: {result.get('pid')}")
+    if result.get("human_client_port") is not None:
+        lines.append(f"Human client port: {result.get('human_client_port')}")
+    if "port_ready" in result:
+        lines.append(f"Port ready: {bool(result.get('port_ready'))}")
+    if "api_ready" in result:
+        lines.append(f"API ready: {bool(result.get('api_ready'))}")
+    if result.get("api_ready_attempts") is not None:
+        lines.append(f"API ready attempts: {result.get('api_ready_attempts')}")
+    if result.get("api_ready_error"):
+        lines.append(f"API ready error: {result.get('api_ready_error')}")
+    if result.get("ok"):
+        lines.append("Host can press Start Game / Ladder Proxy after Join Lobby is accepted.")
     return "\n".join(lines)
 
 

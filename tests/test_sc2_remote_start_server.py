@@ -12,7 +12,7 @@ from sc2_lan_discovery_client import (
     LAV_REMOTE_HUMAN_START_VERSION,
     LanRoom,
 )
-from sc2_remote_start_server import RemoteHumanStartServer
+from sc2_remote_start_server import DEFAULT_SC2_API_READY_TIMEOUT_SEC, RemoteHumanStartServer
 
 
 def sample_room() -> LanRoom:
@@ -61,6 +61,7 @@ class RemoteHumanStartServerTest(unittest.TestCase):
         self.assertEqual(2, response["api_ready_attempts"])
         launch_sc2.assert_called_once()
         wait_for_port.assert_called_once()
+        self.assertEqual(DEFAULT_SC2_API_READY_TIMEOUT_SEC, wait_for_port.call_args.kwargs["timeout_sec"])
         wait_for_ping.assert_called_once()
 
     def test_handle_request_waits_for_api_ping_before_ack(self) -> None:
@@ -92,6 +93,29 @@ class RemoteHumanStartServerTest(unittest.TestCase):
         self.assertFalse(response["api_ready"])
         self.assertEqual(3, response["api_ready_attempts"])
         self.assertEqual("timeout", response["api_ready_error"])
+
+    def test_prepare_sc2_reuses_existing_ready_process(self) -> None:
+        server = RemoteHumanStartServer(port=DEFAULT_REMOTE_START_PORT)
+        room = sample_room()
+        server._room = room
+        server._sc2_executable = Path(r"C:\SC2\SC2_x64.exe")
+        process = Mock(pid=1234)
+        process.poll.return_value = None
+        server._last_process = process
+
+        with (
+            patch.object(Path, "is_file", autospec=True, return_value=True),
+            patch("sc2_remote_start_server.launch_sc2") as launch_sc2,
+            patch("sc2_remote_start_server.wait_for_sc2_api_ping") as wait_for_ping,
+        ):
+            wait_for_ping.return_value.ok = True
+            wait_for_ping.return_value.attempts = 1
+            response = server.prepare_sc2(room, Path(r"C:\SC2\SC2_x64.exe"))
+
+        self.assertTrue(response["ok"])
+        self.assertEqual("already_ready", response["message"])
+        self.assertEqual(1234, response["pid"])
+        launch_sc2.assert_not_called()
 
     def test_handle_request_rejects_room_mismatch(self) -> None:
         server = RemoteHumanStartServer(port=DEFAULT_REMOTE_START_PORT)
