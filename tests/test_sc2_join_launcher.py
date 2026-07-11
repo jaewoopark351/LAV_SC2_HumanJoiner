@@ -61,7 +61,7 @@ class Sc2JoinLauncherTest(unittest.TestCase):
         self.assertEqual(env["LAV_SC2_PROXY_HOST"], "192.168.0.67")
 
     def test_build_launch_plan_uses_executable_and_env(self) -> None:
-        executable = Path(r"C:\StarCraft II\SC2_x64.exe")
+        executable = Path(r"C:\Program Files (x86)\StarCraft II\Versions\Base97425\SC2_x64.exe")
 
         plan = build_launch_plan(sample_room(), executable)
 
@@ -70,6 +70,21 @@ class Sc2JoinLauncherTest(unittest.TestCase):
             [str(executable), "-listen", "0.0.0.0", "-port", "5679", "-displayMode", "0"],
         )
         self.assertEqual(plan.environment_overrides["LAV_SC2_PROXY_HOST"], "192.168.0.67")
+        self.assertEqual(
+            plan.environment_overrides["SC2PATH"],
+            r"C:\Program Files (x86)\StarCraft II",
+        )
+        self.assertEqual(
+            plan.working_directory,
+            r"C:\Program Files (x86)\StarCraft II\Versions\Base97425",
+        )
+        self.assertEqual(
+            plan.path_prepend,
+            [
+                r"C:\Program Files (x86)\StarCraft II\Support64",
+                r"C:\Program Files (x86)\StarCraft II\Versions\Base97425",
+            ],
+        )
 
     def test_human_slot_room_uses_first_proxy_port(self) -> None:
         room = human_slot_room(sample_room())
@@ -78,16 +93,32 @@ class Sc2JoinLauncherTest(unittest.TestCase):
 
     def test_launch_sc2_merges_environment(self) -> None:
         process = Mock(pid=1234)
-        plan = build_launch_plan(sample_room(), Path(r"C:\StarCraft II\SC2_x64.exe"))
+        plan = build_launch_plan(
+            sample_room(),
+            Path(r"C:\Program Files (x86)\StarCraft II\Versions\Base97425\SC2_x64.exe"),
+        )
 
         with patch("sc2_join_launcher.subprocess.Popen", return_value=process) as popen:
-            returned = launch_sc2(plan, base_env={"KEEP": "1"})
+            returned = launch_sc2(plan, base_env={"KEEP": "1", "PATH": r"C:\Existing"})
 
         self.assertIs(returned, process)
         popen.assert_called_once()
         kwargs = popen.call_args.kwargs
         self.assertEqual(kwargs["env"]["KEEP"], "1")
         self.assertEqual(kwargs["env"]["LAV_SC2_PROXY_PORTS"], "5677,5678")
+        self.assertEqual(kwargs["env"]["SC2PATH"], r"C:\Program Files (x86)\StarCraft II")
+        self.assertEqual(
+            kwargs["env"]["PATH"],
+            (
+                r"C:\Program Files (x86)\StarCraft II\Support64;"
+                r"C:\Program Files (x86)\StarCraft II\Versions\Base97425;"
+                r"C:\Existing"
+            ),
+        )
+        self.assertEqual(
+            kwargs["cwd"],
+            r"C:\Program Files (x86)\StarCraft II\Versions\Base97425",
+        )
 
     def test_check_proxy_ports_reports_socket_results(self) -> None:
         room = sample_room()

@@ -14,6 +14,8 @@ from sc2_path_finder import find_sc2_executable
 class LaunchPlan:
     command: list[str]
     environment_overrides: dict[str, str]
+    working_directory: str = ""
+    path_prepend: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -57,9 +59,15 @@ def build_launch_plan(room: LanRoom, sc2_executable: Path | None = None) -> Laun
     executable = find_sc2_executable() if sc2_executable is None else sc2_executable
     if executable is None:
         raise FileNotFoundError("SC2_x64.exe was not found")
+    runtime = _sc2_runtime_paths(executable)
     return LaunchPlan(
         command=[str(executable), *_sc2_api_listen_args(room)],
-        environment_overrides=build_environment_preview(room),
+        environment_overrides={
+            **build_environment_preview(room),
+            **runtime["environment_overrides"],
+        },
+        working_directory=runtime["working_directory"],
+        path_prepend=runtime["path_prepend"],
     )
 
 
@@ -81,7 +89,12 @@ def launch_sc2(
 ) -> subprocess.Popen[bytes]:
     env = dict(os.environ if base_env is None else base_env)
     env.update(plan.environment_overrides)
-    return subprocess.Popen(plan.command, env=env)
+    path_prepend = [str(item) for item in (plan.path_prepend or []) if str(item)]
+    if path_prepend:
+        existing_path = env.get("PATH", "")
+        env["PATH"] = os.pathsep.join([*path_prepend, existing_path] if existing_path else path_prepend)
+    cwd = plan.working_directory or None
+    return subprocess.Popen(plan.command, env=env, cwd=cwd)
 
 
 def check_proxy_ports(room: LanRoom, *, timeout_sec: float = 1.0) -> list[PortCheck]:
@@ -109,6 +122,45 @@ def _quote_for_display(value: str) -> str:
     if any(char.isspace() for char in value) or '"' in value:
         return '"' + value.replace('"', '\\"') + '"'
     return value
+
+
+def _sc2_runtime_paths(executable: Path) -> dict[str, object]:
+    #20260711_kpopmodder: SC2_x64.exe needs Support64 and the active Base folder on PATH when launched directly.
+    executable = Path(executable)
+    base_dir = executable.parent
+    sc2_root = _infer_sc2_root_from_base_dir(base_dir)
+    path_prepend = [str(base_dir)]
+    environment_overrides: dict[str, str] = {}
+    if sc2_root is not None:
+        support64 = sc2_root / "Support64"
+        path_prepend = [str(support64), str(base_dir)]
+        environment_overrides["SC2PATH"] = str(sc2_root)
+    return {
+        "working_directory": str(base_dir),
+        "path_prepend": _dedupe_paths(path_prepend),
+        "environment_overrides": environment_overrides,
+    }
+
+
+def _infer_sc2_root_from_base_dir(base_dir: Path) -> Path | None:
+    if not base_dir.name.lower().startswith("base"):
+        return None
+    versions_dir = base_dir.parent
+    if versions_dir.name.lower() != "versions":
+        return None
+    return versions_dir.parent
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for path in paths:
+        normalized = os.path.normcase(os.path.normpath(str(path)))
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(str(path))
+    return result
 
 
 def _sc2_api_listen_args(room: LanRoom) -> list[str]:
