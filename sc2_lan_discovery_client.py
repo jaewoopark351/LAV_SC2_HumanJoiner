@@ -53,6 +53,9 @@ class LanRoom:
     join_port: int | None = None
     human_client_port: int | None = None
     remote_start_port: int | None = None
+    multiplayer_relay_enabled: bool = True
+    multiplayer_relay_bind_host: str = ""
+    multiplayer_relay_ports: list[int] = field(default_factory=list)
     map_file_name: str = ""
     map_size: int | None = None
     map_sha256: str = ""
@@ -226,6 +229,16 @@ def parse_lav_lan_room_payload(
         join_port=_optional_integer(data, "join_port"),
         human_client_port=_optional_integer(data, "human_client_port"),
         remote_start_port=_optional_integer(data, "remote_start_port"),
+        multiplayer_relay_enabled=_optional_bool(
+            data,
+            "multiplayer_relay_enabled",
+            True,
+        ),
+        multiplayer_relay_bind_host=_optional_string(data, "multiplayer_relay_bind_host"),
+        multiplayer_relay_ports=_integer_list(
+            data.get("multiplayer_relay_ports", []),
+            "multiplayer_relay_ports",
+        ),
         map_file_name=_optional_string(data, "map_file_name"),
         map_size=_optional_integer(data, "map_size"),
         map_sha256=_optional_string(data, "map_sha256"),
@@ -394,6 +407,9 @@ def send_lobby_join(
         "proxy_ports": list(room.proxy_ports),
         "human_client_port": room.human_client_port or DEFAULT_HUMAN_CLIENT_PORT,
         "remote_start_port": room.remote_start_port or DEFAULT_REMOTE_START_PORT,
+        "multiplayer_relay_enabled": bool(room.multiplayer_relay_enabled),
+        "multiplayer_relay_bind_host": room.multiplayer_relay_bind_host,
+        "multiplayer_relay_ports": list(room.multiplayer_relay_ports),
         "timestamp": time.time(),
     }
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -543,6 +559,21 @@ def _optional_integer(data: dict[str, Any], name: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise LanRoomPayloadError(f"{name} must be an integer")
     return value
+
+
+def _optional_bool(data: dict[str, Any], name: str, default: bool) -> bool:
+    value = data.get(name, default)
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return bool(default)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+    raise LanRoomPayloadError(f"{name} must be a boolean")
 
 
 def _optional_float(data: dict[str, Any], name: str, default: float) -> float:

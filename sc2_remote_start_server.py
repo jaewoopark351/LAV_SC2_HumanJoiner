@@ -11,6 +11,11 @@ from typing import Any
 
 from sc2_api_probe import wait_for_sc2_api_ping
 from sc2_join_launcher import build_launch_plan, human_client_port, human_slot_room, launch_sc2
+from sc2_lan_port_relay import (
+    SC2LanPortRelayManager,
+    derive_multiplayer_ports,
+    resolve_lan_bind_host,
+)
 from sc2_lan_discovery_client import (
     DEFAULT_HUMAN_CLIENT_PORT,
     DEFAULT_REMOTE_START_PORT,
@@ -20,6 +25,7 @@ from sc2_lan_discovery_client import (
     LAV_REMOTE_HUMAN_START_PROTOCOL,
     LAV_REMOTE_HUMAN_START_VERSION,
     LanRoom,
+    select_room_connect_host,
 )
 
 
@@ -45,6 +51,9 @@ class RemoteHumanStartServer:
         self._sc2_executable: Path | None = None
         self._last_process = None
         self._last_status: dict[str, Any] = {"running": False}
+        self._multiplayer_relay = SC2LanPortRelayManager(
+            log_callback=lambda message: self.logger.info("SC2 multiplayer relay: %s", message)
+        )
 
     def start(self, room: LanRoom, sc2_executable: Path | None) -> dict[str, Any]:
         with self._lock:
@@ -76,6 +85,7 @@ class RemoteHumanStartServer:
             thread.join(timeout=1.0)
         self._thread = None
         self._sock = None
+        self._multiplayer_relay.stop()
 
     def is_running(self) -> bool:
         thread = self._thread
@@ -92,6 +102,7 @@ class RemoteHumanStartServer:
             "sc2_executable": str(self._sc2_executable or ""),
             "last_pid": getattr(process, "pid", None) if process is not None else None,
             "last_process_running": bool(process is not None and process.poll() is None),
+            "multiplayer_relay": self._multiplayer_relay.status(),
             "last_status": dict(self._last_status),
         }
 
@@ -118,6 +129,11 @@ class RemoteHumanStartServer:
             process,
             ready_timeout_sec=ready_timeout_sec,
             peer="local_prepare",
+        )
+        response = self._ensure_multiplayer_relay_ready(
+            room,
+            response,
+            peer_host=select_room_connect_host(room),
         )
         self._last_status = response
         self.logger.info("SC2 prepare request handled; response=%s", response)
@@ -187,6 +203,11 @@ class RemoteHumanStartServer:
             ready_timeout_sec=_request_timeout(payload, DEFAULT_SC2_API_READY_TIMEOUT_SEC),
             peer=f"{address[0]}:{address[1]}",
         )
+        response = self._ensure_multiplayer_relay_ready(
+            room,
+            response,
+            peer_host=address[0],
+        )
         self._last_status = response
         self.logger.info("Remote start request handled; response=%s", response)
         return response
@@ -249,6 +270,45 @@ class RemoteHumanStartServer:
             api_ready_attempts=getattr(probe, "attempts", 0),
             api_ready_error=getattr(probe, "error", "") if probe is not None else "human_sc2_api_port_not_ready",
         )
+
+    def _ensure_multiplayer_relay_ready(
+        self,
+        room: LanRoom,
+        response: dict[str, Any],
+        *,
+        peer_host: str,
+    ) -> dict[str, Any]:
+        if not response.get("ok"):
+            return response
+        if not bool(room.multiplayer_relay_enabled):
+            response["multiplayer_relay"] = {
+                "ok": True,
+                "running": False,
+                "skipped": "multiplayer_relay_disabled",
+            }
+            return response
+
+        peer_host = str(peer_host or select_room_connect_host(room) or "").strip()
+        ports = derive_multiplayer_ports(room.start_port, room.multiplayer_relay_ports)
+        bind_host = resolve_lan_bind_host(
+            room.multiplayer_relay_bind_host,
+            peer_host=peer_host,
+        )
+        relay_result = self._multiplayer_relay.start(
+            bind_host=bind_host,
+            ports=ports,
+            target_host="127.0.0.1",
+            enable_tcp=True,
+            enable_udp=True,
+        )
+        relay_result["selected_peer_host"] = peer_host
+        relay_result["selected_bind_host"] = bind_host
+        relay_result["selected_ports"] = ports
+        response["multiplayer_relay"] = relay_result
+        if not relay_result.get("ok", False):
+            response["ok"] = False
+            response["error"] = relay_result.get("error") or "multiplayer_relay_failed"
+        return response
 
 
 def _recv_json_object(conn: socket.socket) -> dict[str, Any]:
