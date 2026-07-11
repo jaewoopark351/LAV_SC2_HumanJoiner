@@ -53,6 +53,8 @@ class LanRoom:
     join_port: int | None = None
     human_client_port: int | None = None
     remote_start_port: int | None = None
+    lan_connect_mode: str = "relay"
+    lan_port_layout: str = "role-server-peer-client"
     multiplayer_relay_enabled: bool = True
     multiplayer_relay_bind_host: str = ""
     multiplayer_relay_ports: list[int] = field(default_factory=list)
@@ -229,6 +231,9 @@ def parse_lav_lan_room_payload(
         join_port=_optional_integer(data, "join_port"),
         human_client_port=_optional_integer(data, "human_client_port"),
         remote_start_port=_optional_integer(data, "remote_start_port"),
+        lan_connect_mode=_optional_string(data, "lan_connect_mode") or "relay",
+        lan_port_layout=_optional_string(data, "lan_port_layout")
+        or "role-server-peer-client",
         multiplayer_relay_enabled=_optional_bool(
             data,
             "multiplayer_relay_enabled",
@@ -407,6 +412,8 @@ def send_lobby_join(
         "proxy_ports": list(room.proxy_ports),
         "human_client_port": room.human_client_port or DEFAULT_HUMAN_CLIENT_PORT,
         "remote_start_port": room.remote_start_port or DEFAULT_REMOTE_START_PORT,
+        "lan_connect_mode": room.lan_connect_mode,
+        "lan_port_layout": room.lan_port_layout,
         "multiplayer_relay_enabled": bool(room.multiplayer_relay_enabled),
         "multiplayer_relay_bind_host": room.multiplayer_relay_bind_host,
         "multiplayer_relay_ports": list(room.multiplayer_relay_ports),

@@ -18,6 +18,7 @@ from sc2_lan_port_relay import (
     derive_first_player_server_ports,
     derive_multiplayer_ports,
     derive_second_player_server_ports,
+    normalize_lan_port_layout,
     resolve_lan_bind_host,
 )
 from sc2_lan_discovery_client import (
@@ -294,24 +295,43 @@ class RemoteHumanStartServer:
     ) -> dict[str, Any]:
         if not response.get("ok"):
             return response
-        if not bool(room.multiplayer_relay_enabled):
+        connect_mode = str(getattr(room, "lan_connect_mode", "") or "relay").strip().lower()
+        if connect_mode in {"lan", "no-relay", "norelay"}:
+            connect_mode = "direct"
+        elif connect_mode != "direct":
+            connect_mode = "relay"
+        port_layout = normalize_lan_port_layout(getattr(room, "lan_port_layout", ""))
+        response["lan_connect_mode"] = connect_mode
+        response["lan_port_layout"] = port_layout
+        if connect_mode == "direct" or not bool(room.multiplayer_relay_enabled):
             self._multiplayer_relay.stop()
             self._loopback_relay.stop()
             self._udp_pair_relay.stop()
+            skipped_reason = (
+                "lan_connect_mode_direct"
+                if connect_mode == "direct"
+                else "multiplayer_relay_disabled"
+            )
             response["multiplayer_relay"] = {
                 "ok": True,
                 "running": False,
-                "skipped": "multiplayer_relay_disabled",
+                "skipped": skipped_reason,
+                "lan_connect_mode": connect_mode,
+                "lan_port_layout": port_layout,
             }
             response["loopback_relay"] = {
                 "ok": True,
                 "running": False,
-                "skipped": "multiplayer_relay_disabled",
+                "skipped": skipped_reason,
+                "lan_connect_mode": connect_mode,
+                "lan_port_layout": port_layout,
             }
             response["udp_pair_relay"] = {
                 "ok": True,
                 "running": False,
-                "skipped": "multiplayer_relay_disabled",
+                "skipped": skipped_reason,
+                "lan_connect_mode": connect_mode,
+                "lan_port_layout": port_layout,
             }
             return response
 
@@ -319,9 +339,9 @@ class RemoteHumanStartServer:
         ports = derive_multiplayer_ports(room.start_port, room.multiplayer_relay_ports)
         #20260712_kpopmodder: LavLanSc2LadderServer now fixes the remote human as the first SC2 participant.
         # Its loopback dials the host bot second-player server ports, while its UDP pair owns first-player server ports.
-        loopback_ports = derive_first_player_client_ports(room.start_port)
-        udp_local_ports = derive_first_player_server_ports(room.start_port)
-        udp_peer_ports = derive_second_player_server_ports(room.start_port)
+        loopback_ports = derive_first_player_client_ports(room.start_port, port_layout)
+        udp_local_ports = derive_first_player_server_ports(room.start_port, port_layout)
+        udp_peer_ports = derive_second_player_server_ports(room.start_port, port_layout)
         bind_host = resolve_lan_bind_host(
             room.multiplayer_relay_bind_host,
             peer_host=peer_host,
@@ -336,6 +356,8 @@ class RemoteHumanStartServer:
         relay_result["selected_peer_host"] = peer_host
         relay_result["selected_bind_host"] = bind_host
         relay_result["selected_ports"] = ports
+        relay_result["lan_connect_mode"] = connect_mode
+        relay_result["lan_port_layout"] = port_layout
 
         if peer_host:
             loopback_result = self._loopback_relay.start(
@@ -362,6 +384,8 @@ class RemoteHumanStartServer:
         loopback_result["selected_peer_host"] = peer_host
         loopback_result["selected_bind_host"] = "127.0.0.1"
         loopback_result["selected_ports"] = loopback_ports
+        loopback_result["lan_connect_mode"] = connect_mode
+        loopback_result["lan_port_layout"] = port_layout
 
         if peer_host:
             udp_pair_result = self._udp_pair_relay.start(
@@ -388,6 +412,8 @@ class RemoteHumanStartServer:
         udp_pair_result["selected_bind_host"] = bind_host
         udp_pair_result["selected_local_ports"] = udp_local_ports
         udp_pair_result["selected_peer_ports"] = udp_peer_ports
+        udp_pair_result["lan_connect_mode"] = connect_mode
+        udp_pair_result["lan_port_layout"] = port_layout
 
         response["multiplayer_relay"] = relay_result
         response["loopback_relay"] = loopback_result

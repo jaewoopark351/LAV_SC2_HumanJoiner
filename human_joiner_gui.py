@@ -876,6 +876,8 @@ def _render_room_details(room: LanRoom, sc2_executable: object, title: str) -> s
             f"Join port: {room.join_port if room.join_port is not None else DEFAULT_JOIN_PORT}",
             f"Human SC2 API port: {room.human_client_port if room.human_client_port is not None else DEFAULT_HUMAN_CLIENT_PORT}",
             f"Remote start port: {room.remote_start_port if room.remote_start_port is not None else DEFAULT_REMOTE_START_PORT}",
+            f"LAN connect mode: {room.lan_connect_mode or 'relay'}",
+            f"LAN port layout: {room.lan_port_layout or 'role-server-peer-client'}",
             f"Multiplayer relay: {bool(room.multiplayer_relay_enabled)}",
             f"Multiplayer relay ports: {','.join(str(port) for port in room.multiplayer_relay_ports) or 'derived from start port'}",
             f"SC2 executable: {sc2_executable or 'not found'}",
@@ -990,6 +992,10 @@ def _render_sc2_prepare_result(result: dict[str, Any]) -> str:
         lines.append(f"API ready attempts: {result.get('api_ready_attempts')}")
     if result.get("api_ready_error"):
         lines.append(f"API ready error: {result.get('api_ready_error')}")
+    if result.get("lan_connect_mode"):
+        lines.append(f"LAN connect mode: {result.get('lan_connect_mode')}")
+    if result.get("lan_port_layout"):
+        lines.append(f"LAN port layout: {result.get('lan_port_layout')}")
     relay = result.get("multiplayer_relay")
     if isinstance(relay, dict):
         relay_config = relay.get("config") if isinstance(relay.get("config"), dict) else {}

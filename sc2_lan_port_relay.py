@@ -12,6 +12,8 @@ LogCallback = Callable[[str], None]
 
 DEFAULT_SC2_MULTIPLAYER_START_PORT = 5690
 DEFAULT_SC2_MULTIPLAYER_RELAY_SPAN = 5
+LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT = "role-server-peer-client"
+LAN_PORT_LAYOUT_SWAPPED = "swapped"
 LOOPBACK_TARGET_HOST = "127.0.0.1"
 WINDOWS_UDP_CONNRESET_ERRNO = 10054
 SIO_UDP_CONNRESET = getattr(socket, "SIO_UDP_CONNRESET", 0x9800000C)
@@ -34,26 +36,71 @@ def derive_multiplayer_ports(
 
 def derive_first_player_client_ports(
     start_port: Any = DEFAULT_SC2_MULTIPLAYER_START_PORT,
+    layout: Any = LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT,
 ) -> list[int]:
-    return derive_second_player_server_ports(start_port)
+    return derive_player_client_ports(start_port, "first", layout)
 
 
 def derive_second_player_client_ports(
     start_port: Any = DEFAULT_SC2_MULTIPLAYER_START_PORT,
+    layout: Any = LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT,
 ) -> list[int]:
-    return derive_first_player_server_ports(start_port)
+    return derive_player_client_ports(start_port, "second", layout)
 
 
 def derive_first_player_server_ports(
     start_port: Any = DEFAULT_SC2_MULTIPLAYER_START_PORT,
+    layout: Any = LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT,
 ) -> list[int]:
-    return _derive_join_port_pair(start_port, 2)
+    return derive_player_server_ports(start_port, "first", layout)
 
 
 def derive_second_player_server_ports(
     start_port: Any = DEFAULT_SC2_MULTIPLAYER_START_PORT,
+    layout: Any = LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT,
 ) -> list[int]:
-    return _derive_join_port_pair(start_port, 4)
+    return derive_player_server_ports(start_port, "second", layout)
+
+
+def derive_player_server_ports(
+    start_port: Any = DEFAULT_SC2_MULTIPLAYER_START_PORT,
+    role: Any = "first",
+    layout: Any = LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT,
+) -> list[int]:
+    #20260712_kpopmodder: Keep HumanJoiner relay layout in lockstep with
+    # LavLanSc2LadderServer's diagnostic JoinGame port contract.
+    role_name = _normalize_lan_player_role(role)
+    if normalize_lan_port_layout(layout) == LAN_PORT_LAYOUT_SWAPPED:
+        role_name = _peer_lan_player_role(role_name)
+    return _canonical_player_server_ports(start_port, role_name)
+
+
+def derive_player_client_ports(
+    start_port: Any = DEFAULT_SC2_MULTIPLAYER_START_PORT,
+    role: Any = "first",
+    layout: Any = LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT,
+) -> list[int]:
+    role_name = _normalize_lan_player_role(role)
+    peer_role = _peer_lan_player_role(role_name)
+    if normalize_lan_port_layout(layout) == LAN_PORT_LAYOUT_SWAPPED:
+        peer_role = role_name
+    return _canonical_player_server_ports(start_port, peer_role)
+
+
+def normalize_lan_port_layout(
+    value: Any = LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT,
+) -> str:
+    text = str(value or "").strip().lower().replace("_", "-")
+    if text in {
+        "swapped",
+        "swap",
+        "flipped",
+        "inverse",
+        "peer-server-role-client",
+        "swapped-server-client",
+    }:
+        return LAN_PORT_LAYOUT_SWAPPED
+    return LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT
 
 
 def resolve_lan_bind_host(
@@ -842,6 +889,31 @@ def _normalize_ports(value: Any) -> list[int]:
         if port and port not in ports:
             ports.append(port)
     return ports
+
+
+def _normalize_lan_player_role(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("_", "-")
+    if text in {
+        "2",
+        "second",
+        "second-player",
+        "player2",
+        "player-2",
+        "p2",
+        "bot",
+        "host-bot",
+    }:
+        return "second"
+    return "first"
+
+
+def _peer_lan_player_role(role: Any) -> str:
+    return "second" if _normalize_lan_player_role(role) == "first" else "first"
+
+
+def _canonical_player_server_ports(start_port: Any, role: Any) -> list[int]:
+    offset = 2 if _normalize_lan_player_role(role) == "first" else 4
+    return _derive_join_port_pair(start_port, offset)
 
 
 def _derive_join_port_pair(start_port: Any, offset: int) -> list[int]:
