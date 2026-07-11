@@ -1020,6 +1020,34 @@ def _render_sc2_prepare_result(result: dict[str, Any]) -> str:
         )
         if loopback_relay.get("error"):
             lines.append(f"Loopback relay error: {loopback_relay.get('error')}")
+    udp_pair_relay = result.get("udp_pair_relay")
+    if isinstance(udp_pair_relay, dict):
+        udp_config = (
+            udp_pair_relay.get("config")
+            if isinstance(udp_pair_relay.get("config"), dict)
+            else {}
+        )
+        local_ports = (
+            udp_pair_relay.get("selected_local_ports")
+            or udp_config.get("local_ports", [])
+            or []
+        )
+        peer_ports = (
+            udp_pair_relay.get("selected_peer_ports")
+            or udp_config.get("peer_ports", [])
+            or []
+        )
+        lines.append(
+            "UDP pair relay: "
+            f"ok={bool(udp_pair_relay.get('ok'))} "
+            f"running={bool(udp_pair_relay.get('running'))} "
+            f"bind={udp_pair_relay.get('selected_bind_host') or udp_config.get('lan_bind_host') or ''} "
+            f"target={udp_pair_relay.get('selected_peer_host') or udp_config.get('peer_host') or ''} "
+            f"local_ports={','.join(str(port) for port in local_ports)} "
+            f"peer_ports={','.join(str(port) for port in peer_ports)}"
+        )
+        if udp_pair_relay.get("error"):
+            lines.append(f"UDP pair relay error: {udp_pair_relay.get('error')}")
     if result.get("ok"):
         lines.append("Host can press Start Game / Ladder Proxy after Join Lobby is accepted.")
     return "\n".join(lines)

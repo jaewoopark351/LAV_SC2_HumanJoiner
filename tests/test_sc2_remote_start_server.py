@@ -33,6 +33,7 @@ def sample_room() -> LanRoom:
 class RemoteHumanStartServerTest(unittest.TestCase):
     def test_handle_request_launches_sc2_and_reports_ready(self) -> None:
         server = RemoteHumanStartServer(port=DEFAULT_REMOTE_START_PORT)
+        self.addCleanup(server.stop)
         server._room = sample_room()
         server._sc2_executable = Path(r"C:\SC2\SC2_x64.exe")
         process = Mock(pid=1234)
@@ -66,6 +67,7 @@ class RemoteHumanStartServerTest(unittest.TestCase):
 
     def test_handle_request_waits_for_api_ping_before_ack(self) -> None:
         server = RemoteHumanStartServer(port=DEFAULT_REMOTE_START_PORT)
+        self.addCleanup(server.stop)
         server._room = sample_room()
         server._sc2_executable = Path(r"C:\SC2\SC2_x64.exe")
         process = Mock(pid=1234)
@@ -96,6 +98,7 @@ class RemoteHumanStartServerTest(unittest.TestCase):
 
     def test_prepare_sc2_reuses_existing_ready_process(self) -> None:
         server = RemoteHumanStartServer(port=DEFAULT_REMOTE_START_PORT)
+        self.addCleanup(server.stop)
         room = sample_room()
         server._room = room
         server._sc2_executable = Path(r"C:\SC2\SC2_x64.exe")
@@ -119,6 +122,7 @@ class RemoteHumanStartServerTest(unittest.TestCase):
 
     def test_handle_request_rejects_room_mismatch(self) -> None:
         server = RemoteHumanStartServer(port=DEFAULT_REMOTE_START_PORT)
+        self.addCleanup(server.stop)
         server._room = sample_room()
         server._sc2_executable = Path(r"C:\SC2\SC2_x64.exe")
 

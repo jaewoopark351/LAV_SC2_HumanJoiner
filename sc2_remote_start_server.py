@@ -13,8 +13,11 @@ from sc2_api_probe import wait_for_sc2_api_ping
 from sc2_join_launcher import build_launch_plan, human_client_port, human_slot_room, launch_sc2
 from sc2_lan_port_relay import (
     SC2LanPortRelayManager,
+    SC2UdpPortPairRelayManager,
+    derive_first_player_server_ports,
     derive_multiplayer_ports,
     derive_second_player_client_ports,
+    derive_second_player_server_ports,
     resolve_lan_bind_host,
 )
 from sc2_lan_discovery_client import (
@@ -58,6 +61,9 @@ class RemoteHumanStartServer:
         self._loopback_relay = SC2LanPortRelayManager(
             log_callback=lambda message: self.logger.info("SC2 loopback relay: %s", message)
         )
+        self._udp_pair_relay = SC2UdpPortPairRelayManager(
+            log_callback=lambda message: self.logger.info("SC2 UDP pair relay: %s", message)
+        )
 
     def start(self, room: LanRoom, sc2_executable: Path | None) -> dict[str, Any]:
         with self._lock:
@@ -91,6 +97,7 @@ class RemoteHumanStartServer:
         self._sock = None
         self._multiplayer_relay.stop()
         self._loopback_relay.stop()
+        self._udp_pair_relay.stop()
 
     def is_running(self) -> bool:
         thread = self._thread
@@ -109,6 +116,7 @@ class RemoteHumanStartServer:
             "last_process_running": bool(process is not None and process.poll() is None),
             "multiplayer_relay": self._multiplayer_relay.status(),
             "multiplayer_loopback_relay": self._loopback_relay.status(),
+            "multiplayer_udp_pair_relay": self._udp_pair_relay.status(),
             "last_status": dict(self._last_status),
         }
 
@@ -287,7 +295,9 @@ class RemoteHumanStartServer:
         if not response.get("ok"):
             return response
         if not bool(room.multiplayer_relay_enabled):
+            self._multiplayer_relay.stop()
             self._loopback_relay.stop()
+            self._udp_pair_relay.stop()
             response["multiplayer_relay"] = {
                 "ok": True,
                 "running": False,
@@ -298,11 +308,18 @@ class RemoteHumanStartServer:
                 "running": False,
                 "skipped": "multiplayer_relay_disabled",
             }
+            response["udp_pair_relay"] = {
+                "ok": True,
+                "running": False,
+                "skipped": "multiplayer_relay_disabled",
+            }
             return response
 
         peer_host = str(peer_host or select_room_connect_host(room) or "").strip()
         ports = derive_multiplayer_ports(room.start_port, room.multiplayer_relay_ports)
         loopback_ports = derive_second_player_client_ports(room.start_port)
+        udp_local_ports = derive_second_player_server_ports(room.start_port)
+        udp_peer_ports = derive_first_player_server_ports(room.start_port)
         bind_host = resolve_lan_bind_host(
             room.multiplayer_relay_bind_host,
             peer_host=peer_host,
@@ -312,7 +329,7 @@ class RemoteHumanStartServer:
             ports=ports,
             target_host="127.0.0.1",
             enable_tcp=True,
-            enable_udp=True,
+            enable_udp=False,
         )
         relay_result["selected_peer_host"] = peer_host
         relay_result["selected_bind_host"] = bind_host
@@ -324,7 +341,7 @@ class RemoteHumanStartServer:
                 ports=loopback_ports,
                 target_host=peer_host,
                 enable_tcp=True,
-                enable_udp=True,
+                enable_udp=False,
             )
         else:
             self._loopback_relay.stop()
@@ -337,20 +354,51 @@ class RemoteHumanStartServer:
                     "target_host": "",
                     "ports": loopback_ports,
                     "enable_tcp": True,
-                    "enable_udp": True,
+                    "enable_udp": False,
                 },
             }
         loopback_result["selected_peer_host"] = peer_host
         loopback_result["selected_bind_host"] = "127.0.0.1"
         loopback_result["selected_ports"] = loopback_ports
 
+        if peer_host:
+            udp_pair_result = self._udp_pair_relay.start(
+                lan_bind_host=bind_host,
+                peer_host=peer_host,
+                local_ports=udp_local_ports,
+                peer_ports=udp_peer_ports,
+            )
+        else:
+            self._udp_pair_relay.stop()
+            udp_pair_result = {
+                "ok": False,
+                "running": False,
+                "error": "host_peer_missing",
+                "config": {
+                    "lan_bind_host": bind_host,
+                    "local_bind_host": "127.0.0.1",
+                    "peer_host": "",
+                    "local_ports": udp_local_ports,
+                    "peer_ports": udp_peer_ports,
+                },
+            }
+        udp_pair_result["selected_peer_host"] = peer_host
+        udp_pair_result["selected_bind_host"] = bind_host
+        udp_pair_result["selected_local_ports"] = udp_local_ports
+        udp_pair_result["selected_peer_ports"] = udp_peer_ports
+
         response["multiplayer_relay"] = relay_result
         response["loopback_relay"] = loopback_result
-        if not relay_result.get("ok", False) or not loopback_result.get("ok", False):
+        response["udp_pair_relay"] = udp_pair_result
+        if (
+            not relay_result.get("ok", False)
+            or not loopback_result.get("ok", False)
+            or not udp_pair_result.get("ok", False)
+        ):
             response["ok"] = False
             errors = [
                 str(item.get("error") or "")
-                for item in (relay_result, loopback_result)
+                for item in (relay_result, loopback_result, udp_pair_result)
                 if isinstance(item, dict) and item.get("error")
             ]
             response["error"] = "; ".join(errors) or "multiplayer_relay_failed"
