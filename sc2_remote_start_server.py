@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -55,6 +56,8 @@ class RemoteHumanStartServer:
         self._room: LanRoom | None = None
         self._sc2_executable: Path | None = None
         self._last_process = None
+        self._last_native_joiner_process = None
+        self._last_native_joiner_status: dict[str, Any] = {"running": False}
         self._last_status: dict[str, Any] = {"running": False}
         self._multiplayer_relay = SC2LanPortRelayManager(
             log_callback=lambda message: self.logger.info("SC2 multiplayer relay: %s", message)
@@ -115,6 +118,7 @@ class RemoteHumanStartServer:
             "sc2_executable": str(self._sc2_executable or ""),
             "last_pid": getattr(process, "pid", None) if process is not None else None,
             "last_process_running": bool(process is not None and process.poll() is None),
+            "native_joiner": dict(self._last_native_joiner_status),
             "multiplayer_relay": self._multiplayer_relay.status(),
             "multiplayer_loopback_relay": self._loopback_relay.status(),
             "multiplayer_udp_pair_relay": self._udp_pair_relay.status(),
@@ -223,8 +227,84 @@ class RemoteHumanStartServer:
             response,
             peer_host=address[0],
         )
+        command = str(payload.get("command") or "start_sc2").strip().lower()
+        if command == "start_native_joiner":
+            response = self._ensure_native_joiner_ready(room, response, payload)
+        elif command not in {"", "start_sc2", "prepare_sc2"}:
+            response = _ack(False, error="unsupported_command", command=command, room_id=room.room_id)
         self._last_status = response
-        self.logger.info("Remote start request handled; response=%s", response)
+        self.logger.info("Remote start request handled; command=%s response=%s", command, response)
+        return response
+
+    def _ensure_native_joiner_ready(
+        self,
+        room: LanRoom,
+        response: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not response.get("ok"):
+            return response
+        native_joiner = payload.get("native_joiner")
+        native_joiner = native_joiner if isinstance(native_joiner, dict) else {}
+        executable, candidates = _resolve_native_joiner_executable(native_joiner, Path(__file__).resolve().parent)
+        if executable is None:
+            response["ok"] = False
+            response["error"] = "native_joiner_executable_missing"
+            response["native_joiner"] = {"ok": False, "candidates": candidates}
+            self._last_native_joiner_status = dict(response["native_joiner"])
+            return response
+
+        process = self._last_native_joiner_process
+        if process is not None and process.poll() is None:
+            status = {
+                "ok": True,
+                "running": True,
+                "pid": process.pid,
+                "message": "already_running",
+                "executable": str(executable),
+            }
+            response["native_joiner"] = status
+            self._last_native_joiner_status = dict(status)
+            return response
+
+        command = [str(executable), *_native_joiner_args(native_joiner, room)]
+        log_path = _native_joiner_log_path(Path(__file__).resolve().parent)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with log_path.open("ab", buffering=0) as log_file:
+                log_file.write(("\n--- LavLanRemoteJoiner launch ---\n" + " ".join(command) + "\n").encode("utf-8", errors="replace"))
+                process = subprocess.Popen(
+                    command,
+                    cwd=str(executable.parent),
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    creationflags=_native_joiner_creation_flags(),
+                )
+        except Exception as exc:
+            response["ok"] = False
+            response["error"] = f"native_joiner_launch_failed: {exc}"
+            response["native_joiner"] = {
+                "ok": False,
+                "executable": str(executable),
+                "command": command,
+                "log_path": str(log_path),
+                "error": str(exc),
+            }
+            self._last_native_joiner_status = dict(response["native_joiner"])
+            return response
+
+        with self._lock:
+            self._last_native_joiner_process = process
+        status = {
+            "ok": True,
+            "running": True,
+            "pid": process.pid,
+            "executable": str(executable),
+            "command": command,
+            "log_path": str(log_path),
+        }
+        response["native_joiner"] = status
+        self._last_native_joiner_status = dict(status)
         return response
 
     def _ensure_sc2_api_ready(
@@ -433,6 +513,96 @@ class RemoteHumanStartServer:
         return response
 
 
+def _resolve_native_joiner_executable(native_joiner: dict[str, Any], base_dir: Path) -> tuple[Path | None, list[str]]:
+    name = str(native_joiner.get("executable_name") or "LavLanRemoteJoiner.exe").strip() or "LavLanRemoteJoiner.exe"
+    values = [
+        native_joiner.get("executable_path"),
+        native_joiner.get("executable"),
+    ]
+    candidates: list[Path] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            candidates.append(Path(text))
+    candidates.extend(
+        [
+            base_dir / "bin" / name,
+            base_dir / name,
+            base_dir / "native" / "LavLanSc2LadderServer" / "bin" / name,
+            base_dir.parent.parent / "LAV_v0.2" / "plugins" / "StarCraft2" / "native" / "LavLanSc2LadderServer" / "bin" / name,
+            Path.cwd() / "bin" / name,
+            Path.cwd() / name,
+        ]
+    )
+    seen: set[str] = set()
+    candidate_strings: list[str] = []
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidate_strings.append(key)
+        if candidate.is_file():
+            return candidate, candidate_strings
+    return None, candidate_strings
+
+
+def _native_joiner_args(native_joiner: dict[str, Any], room: LanRoom) -> list[str]:
+    start_port = _valid_port(native_joiner.get("start_port"), room.start_port)
+    args = [
+        "--player-name",
+        _string_value(native_joiner.get("player_name"), "IdleProbe"),
+        "--race",
+        _string_value(native_joiner.get("race"), "Protoss"),
+        "--sc2-host",
+        _string_value(native_joiner.get("sc2_host"), "127.0.0.1"),
+        "--sc2-port",
+        str(_valid_port(native_joiner.get("sc2_port"), human_client_port(room))),
+        "--start-port",
+        str(start_port),
+        "--status-port",
+        str(_valid_port(native_joiner.get("status_port"), 5677)),
+        "--opponent-id",
+        _string_value(native_joiner.get("opponent_id"), "HUMAN"),
+        "--ready-wait-sec",
+        str(_positive_float(native_joiner.get("ready_wait_sec"), 10.0)),
+    ]
+    lan_game_host_ip = _string_value(native_joiner.get("lan_game_host_ip"), "")
+    if lan_game_host_ip:
+        args.extend(["--lan-game-host-ip", lan_game_host_ip])
+    args.extend(
+        [
+            "--lan-connect-mode",
+            _string_value(native_joiner.get("lan_connect_mode"), getattr(room, "lan_connect_mode", "relay") or "relay"),
+            "--lan-port-layout",
+            normalize_lan_port_layout(native_joiner.get("lan_port_layout") or getattr(room, "lan_port_layout", "")),
+        ]
+    )
+    return args
+
+
+def _native_joiner_log_path(base_dir: Path) -> Path:
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return base_dir / "logs" / f"lav_lan_remote_joiner_{stamp}.log"
+
+
+def _native_joiner_creation_flags() -> int:
+    flags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    flags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return flags
+
+
+def _string_value(value: Any, default: str) -> str:
+    text = str(value or "").strip()
+    return text or str(default)
+
+
+def _positive_float(value: Any, default: float) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    return result if result > 0 else default
 def _recv_json_object(conn: socket.socket) -> dict[str, Any]:
     chunks: list[bytes] = []
     conn.settimeout(5.0)
