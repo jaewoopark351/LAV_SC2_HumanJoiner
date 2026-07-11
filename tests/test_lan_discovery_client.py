@@ -5,6 +5,7 @@ import unittest
 
 from sc2_lan_discovery_client import (
     DEFAULT_JOIN_PORT,
+    DEFAULT_MAP_DOWNLOAD_PORT,
     DEFAULT_REMOTE_START_PORT,
     LAV_LAN_ROOM_PROTOCOL,
     LAV_LAN_ROOM_VERSION,
@@ -33,6 +34,11 @@ def sample_payload(**overrides: object) -> str:
         "join_port": DEFAULT_JOIN_PORT,
         "human_client_port": 5679,
         "remote_start_port": DEFAULT_REMOTE_START_PORT,
+        "map_file_name": "IncorporealAIE_v4.SC2Map",
+        "map_size": 4589,
+        "map_sha256": "abc123",
+        "map_download_port": DEFAULT_MAP_DOWNLOAD_PORT,
+        "map_download_path": "/map/IncorporealAIE_v4.SC2Map",
         "room_state": "waiting",
         "timestamp": 0,
         "expires_sec": 10,
@@ -55,6 +61,11 @@ class ParseLavLanRoomPayloadTest(unittest.TestCase):
         self.assertEqual(room.join_port, DEFAULT_JOIN_PORT)
         self.assertEqual(room.human_client_port, 5679)
         self.assertEqual(room.remote_start_port, DEFAULT_REMOTE_START_PORT)
+        self.assertEqual(room.map_file_name, "IncorporealAIE_v4.SC2Map")
+        self.assertEqual(room.map_size, 4589)
+        self.assertEqual(room.map_sha256, "abc123")
+        self.assertEqual(room.map_download_port, DEFAULT_MAP_DOWNLOAD_PORT)
+        self.assertEqual(room.map_download_path, "/map/IncorporealAIE_v4.SC2Map")
         self.assertEqual(room.room_state, "waiting")
         self.assertEqual(room.last_seen, 100.0)
         self.assertEqual(room.sender_ip, "192.168.0.67")

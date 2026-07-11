@@ -16,6 +16,7 @@ from sc2_lan_discovery_client import (
     LanRoom,
     LobbyJoinResult,
 )
+from sc2_map_downloader import MapSyncResult
 
 
 def sample_room() -> LanRoom:
@@ -267,9 +268,35 @@ class HumanJoinerGuiTest(unittest.TestCase):
         self.assertEqual(send_lobby_join.call_args.kwargs["player_name"], "Tester")
         start_listener.assert_called_once()
         self.assertIn("Lobby join accepted", status)
+        self.assertIn("Map sync result", lobby_status)
         self.assertIn("Accepted: True", lobby_status)
         self.assertIn("Remote start listener", lobby_status)
         self.assertEqual(new_state["joined_room"], room)
+
+    def test_join_selected_lobby_blocks_when_map_sync_fails(self) -> None:
+        room = sample_room()
+        room.map_file_name = "PersephoneLE.SC2Map"
+        state = {"rooms": [room], "labels": ["room label"], "manual_room": None}
+
+        with (
+            patch(
+                "human_joiner_gui.ensure_room_map_file",
+                return_value=MapSyncResult(ok=False, error="map_write_permission_denied: denied"),
+            ) as ensure_map,
+            patch("human_joiner_gui.send_lobby_join") as send_lobby_join,
+        ):
+            status, lobby_status, new_state = human_joiner_gui.join_selected_lobby(
+                "room label",
+                "Tester",
+                state,
+                r"C:\SC2\SC2_x64.exe",
+            )
+
+        ensure_map.assert_called_once()
+        send_lobby_join.assert_not_called()
+        self.assertIn("Map sync failed", status)
+        self.assertIn("map_write_permission_denied", lobby_status)
+        self.assertEqual(state, new_state)
 
     def test_join_manual_room_launches_remote_human_listener_without_proxy_check(self) -> None:
         process = Mock(pid=1234)

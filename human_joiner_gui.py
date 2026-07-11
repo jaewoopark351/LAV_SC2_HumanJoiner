@@ -32,6 +32,7 @@ from sc2_lan_discovery_client import (
     DEFAULT_JOIN_PORT,
     DEFAULT_HUMAN_CLIENT_PORT,
     DEFAULT_REMOTE_START_PORT,
+    DEFAULT_MAP_DOWNLOAD_PORT,
     DEFAULT_SCAN_SECONDS,
     LAV_LAN_ROOM_PROTOCOL,
     LAV_LAN_ROOM_VERSION,
@@ -42,6 +43,7 @@ from sc2_lan_discovery_client import (
     select_room_connect_host,
     send_lobby_join,
 )
+from sc2_map_downloader import MapSyncResult, ensure_room_map_file
 from sc2_path_finder import find_sc2_executable
 from sc2_remote_start_server import RemoteHumanStartServer
 
@@ -434,16 +436,24 @@ def join_selected_lobby(
         select_room_connect_host(room),
         room.join_port or DEFAULT_JOIN_PORT,
     )
+    sc2_executable = _resolve_sc2_executable(sc2_path)
+    map_sync = ensure_room_map_file(room, sc2_executable)
+    map_status = _render_map_sync_result(map_sync)
+    logger.info("GUI map sync result before lobby join: %s", map_sync)
+    if not map_sync.ok:
+        logger.warning("GUI lobby join blocked by map sync failure; error=%s", map_sync.error)
+        return "Map sync failed. Lobby join was not sent.", map_status, state or {}
+
     result = send_lobby_join(room, player_name=str(player_name or "Human"))
     lobby_status = _render_lobby_join_result(result)
     if not result.ok:
         logger.warning("GUI lobby join failed; error=%s", result.error)
-        return "Lobby join failed.", lobby_status, state or {}
+        return "Lobby join failed.", "\n".join([map_status, "", lobby_status]), state or {}
 
     logger.info("GUI lobby join accepted; room_id=%s client_id=%s", room.room_id, result.client_id)
     listener_status = _start_remote_start_listener(room, sc2_path)
     status = "Lobby join accepted. Host can now press Start Game / Ladder Proxy."
-    return status, "\n".join([lobby_status, "", listener_status]), _state_with_joined_room(state, room, result)
+    return status, "\n".join([map_status, "", lobby_status, "", listener_status]), _state_with_joined_room(state, room, result)
 
 
 def join_selected_room(
@@ -799,6 +809,8 @@ def _render_room_details(room: LanRoom, sc2_executable: object, title: str) -> s
             f"Host: {host}",
             f"Bot: {room.preferred_bot}",
             f"Map: {room.preferred_map}",
+            f"Map file: {room.map_file_name or 'not advertised'}",
+            f"Map download port: {room.map_download_port or DEFAULT_MAP_DOWNLOAD_PORT if room.map_file_name else 'not advertised'}",
             f"Proxy ports: {','.join(str(port) for port in room.proxy_ports)}",
             f"Start port: {room.start_port if room.start_port is not None else ''}",
             f"Join port: {room.join_port if room.join_port is not None else DEFAULT_JOIN_PORT}",
@@ -825,6 +837,26 @@ def _render_lobby_join_result(result: LobbyJoinResult) -> str:
         lines.append(f"Joined count: {joined_count}")
     if result.error:
         lines.append(f"Error: {result.error}")
+    return "\n".join(lines)
+
+
+def _render_map_sync_result(result: MapSyncResult) -> str:
+    lines = [
+        "Map sync result",
+        f"OK: {result.ok}",
+    ]
+    if result.skipped:
+        lines.append(f"Skipped: {result.skipped}")
+    if result.action:
+        lines.append(f"Action: {result.action}")
+    if result.destination:
+        lines.append(f"Destination: {result.destination}")
+    if result.url:
+        lines.append(f"URL: {result.url}")
+    if result.error:
+        lines.append(f"Error: {result.error}")
+        if "map_write_permission_denied" in result.error:
+            lines.append("Run HumanJoiner as administrator or copy the map into the SC2 Maps folder manually.")
     return "\n".join(lines)
 
 
