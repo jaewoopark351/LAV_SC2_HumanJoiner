@@ -13,6 +13,8 @@ LogCallback = Callable[[str], None]
 DEFAULT_SC2_MULTIPLAYER_START_PORT = 5690
 DEFAULT_SC2_MULTIPLAYER_RELAY_SPAN = 5
 LOOPBACK_TARGET_HOST = "127.0.0.1"
+WINDOWS_UDP_CONNRESET_ERRNO = 10054
+SIO_UDP_CONNRESET = getattr(socket, "SIO_UDP_CONNRESET", 0x9800000C)
 
 
 def derive_multiplayer_ports(
@@ -452,14 +454,18 @@ class _UdpPortPairRelay:
         self._last_error = ""
         self._lan_to_local_packets = 0
         self._local_to_lan_packets = 0
+        self._lan_recv_reset_count = 0
+        self._local_recv_reset_count = 0
 
     def start(self) -> dict[str, Any]:
         self._stop.clear()
         try:
             lan_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _configure_udp_socket(lan_sock)
             lan_sock.bind((self.lan_bind_host, self.local_port))
             lan_sock.settimeout(0.5)
             local_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _configure_udp_socket(local_sock)
             local_sock.bind((self.local_bind_host, self.peer_port))
             local_sock.settimeout(0.5)
         except OSError as exc:
@@ -530,6 +536,8 @@ class _UdpPortPairRelay:
             "peer_port": self.peer_port,
             "lan_to_local_packets": self._lan_to_local_packets,
             "local_to_lan_packets": self._local_to_lan_packets,
+            "lan_recv_reset_count": self._lan_recv_reset_count,
+            "local_recv_reset_count": self._local_recv_reset_count,
             "last_error": self._last_error,
         }
 
@@ -544,6 +552,14 @@ class _UdpPortPairRelay:
             except socket.timeout:
                 continue
             except OSError as exc:
+                if _is_udp_connreset(exc):
+                    self._lan_recv_reset_count += 1
+                    self._last_error = str(exc)
+                    if self._should_log_reset(self._lan_recv_reset_count):
+                        self._log(
+                            f"UDP preserved LAN recv reset ignored {self.lan_bind_host}:{self.local_port}: {exc}"
+                        )
+                    continue
                 if not self._stop.is_set():
                     self._last_error = str(exc)
                     self._log(f"UDP preserved LAN recv failed {self.lan_bind_host}:{self.local_port}: {exc}")
@@ -577,6 +593,14 @@ class _UdpPortPairRelay:
             except socket.timeout:
                 continue
             except OSError as exc:
+                if _is_udp_connreset(exc):
+                    self._local_recv_reset_count += 1
+                    self._last_error = str(exc)
+                    if self._should_log_reset(self._local_recv_reset_count):
+                        self._log(
+                            f"UDP preserved local recv reset ignored {self.local_bind_host}:{self.peer_port}: {exc}"
+                        )
+                    continue
                 if not self._stop.is_set():
                     self._last_error = str(exc)
                     self._log(f"UDP preserved local recv failed {self.local_bind_host}:{self.peer_port}: {exc}")
@@ -598,6 +622,9 @@ class _UdpPortPairRelay:
                     "UDP preserved local->LAN send failed "
                     f"{peer[0]}:{peer[1]} -> {self.peer_host}:{self.peer_port}: {exc}"
                 )
+
+    def _should_log_reset(self, count: int) -> bool:
+        return count <= 3 or count % 10 == 0
 
 
 class _UdpPortRelay:
@@ -626,6 +653,7 @@ class _UdpPortRelay:
         self._stop.clear()
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _configure_udp_socket(sock)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((self.bind_host, self.port))
             sock.settimeout(0.5)
@@ -709,6 +737,7 @@ class _UdpPortRelay:
             if existing is not None:
                 return existing
             local_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            _configure_udp_socket(local_sock)
             #20260711_kpopmodder: Loopback->LAN relay must let Windows choose
             # the outbound LAN interface, while LAN->loopback relay must stay
             # pinned to 127.0.0.1 so SC2 sees local traffic.
@@ -774,6 +803,27 @@ def _pipe_tcp(source: socket.socket, target: socket.socket, stop: threading.Even
         target.shutdown(socket.SHUT_WR)
     except OSError:
         pass
+
+
+def _configure_udp_socket(sock: socket.socket) -> None:
+    #20260711_kpopmodder: Windows may surface ICMP port-unreachable as
+    # WSAECONNRESET on UDP recv. During SC2 JoinGame both clients can briefly
+    # probe ports before the peer is fully ready, so keep the relay alive.
+    ioctl = getattr(sock, "ioctl", None)
+    if not callable(ioctl):
+        return
+    try:
+        ioctl(SIO_UDP_CONNRESET, False)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def _is_udp_connreset(exc: OSError) -> bool:
+    values = [
+        getattr(exc, "winerror", None),
+        getattr(exc, "errno", None),
+    ]
+    return WINDOWS_UDP_CONNRESET_ERRNO in values
 
 
 def _normalize_ports(value: Any) -> list[int]:
