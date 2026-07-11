@@ -998,6 +998,28 @@ def _render_sc2_prepare_result(result: dict[str, Any]) -> str:
         )
         if relay.get("error"):
             lines.append(f"Multiplayer relay error: {relay.get('error')}")
+    loopback_relay = result.get("loopback_relay")
+    if isinstance(loopback_relay, dict):
+        loopback_config = (
+            loopback_relay.get("config")
+            if isinstance(loopback_relay.get("config"), dict)
+            else {}
+        )
+        loopback_ports = (
+            loopback_relay.get("selected_ports")
+            or loopback_config.get("ports", [])
+            or []
+        )
+        lines.append(
+            "Loopback relay: "
+            f"ok={bool(loopback_relay.get('ok'))} "
+            f"running={bool(loopback_relay.get('running'))} "
+            f"bind={loopback_relay.get('selected_bind_host') or loopback_config.get('bind_host') or ''} "
+            f"target={loopback_relay.get('selected_peer_host') or loopback_config.get('target_host') or ''} "
+            f"ports={','.join(str(port) for port in loopback_ports)}"
+        )
+        if loopback_relay.get("error"):
+            lines.append(f"Loopback relay error: {loopback_relay.get('error')}")
     if result.get("ok"):
         lines.append("Host can press Start Game / Ladder Proxy after Join Lobby is accepted.")
     return "\n".join(lines)

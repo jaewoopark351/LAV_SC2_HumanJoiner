@@ -30,6 +30,18 @@ def derive_multiplayer_ports(
     ]
 
 
+def derive_first_player_client_ports(
+    start_port: Any = DEFAULT_SC2_MULTIPLAYER_START_PORT,
+) -> list[int]:
+    return _derive_join_port_pair(start_port, 4)
+
+
+def derive_second_player_client_ports(
+    start_port: Any = DEFAULT_SC2_MULTIPLAYER_START_PORT,
+) -> list[int]:
+    return _derive_join_port_pair(start_port, 2)
+
+
 def resolve_lan_bind_host(
     preferred_host: Any = "",
     *,
@@ -405,7 +417,15 @@ class _UdpPortRelay:
             if existing is not None:
                 return existing
             local_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            local_sock.bind((LOOPBACK_TARGET_HOST, 0))
+            #20260711_kpopmodder: Loopback->LAN relay must let Windows choose
+            # the outbound LAN interface, while LAN->loopback relay must stay
+            # pinned to 127.0.0.1 so SC2 sees local traffic.
+            reply_bind_host = (
+                LOOPBACK_TARGET_HOST
+                if _is_loopback_target(self.target_host)
+                else "0.0.0.0"
+            )
+            local_sock.bind((reply_bind_host, 0))
             local_sock.settimeout(0.5)
             self._peers[peer] = local_sock
             threading.Thread(
@@ -482,6 +502,15 @@ def _normalize_ports(value: Any) -> list[int]:
     return ports
 
 
+def _derive_join_port_pair(start_port: Any, offset: int) -> list[int]:
+    base = _valid_port(start_port, DEFAULT_SC2_MULTIPLAYER_START_PORT)
+    return [
+        port
+        for port in (base + int(offset), base + int(offset) + 1)
+        if 0 < port < 65536
+    ]
+
+
 def _valid_port(value: Any, default: int) -> int:
     try:
         port = int(value)
@@ -503,6 +532,11 @@ def _is_loopback_or_unspecified(value: str) -> bool:
         or text in {"0.0.0.0", "::", "localhost", "::1"}
         or text.startswith("127.")
     )
+
+
+def _is_loopback_target(value: str) -> bool:
+    text = _clean_host(value).lower()
+    return text in {"localhost", "::1"} or text.startswith("127.")
 
 
 def _local_ip_for_peer(peer_host: str) -> str:

@@ -14,6 +14,7 @@ from sc2_join_launcher import build_launch_plan, human_client_port, human_slot_r
 from sc2_lan_port_relay import (
     SC2LanPortRelayManager,
     derive_multiplayer_ports,
+    derive_second_player_client_ports,
     resolve_lan_bind_host,
 )
 from sc2_lan_discovery_client import (
@@ -54,6 +55,9 @@ class RemoteHumanStartServer:
         self._multiplayer_relay = SC2LanPortRelayManager(
             log_callback=lambda message: self.logger.info("SC2 multiplayer relay: %s", message)
         )
+        self._loopback_relay = SC2LanPortRelayManager(
+            log_callback=lambda message: self.logger.info("SC2 loopback relay: %s", message)
+        )
 
     def start(self, room: LanRoom, sc2_executable: Path | None) -> dict[str, Any]:
         with self._lock:
@@ -86,6 +90,7 @@ class RemoteHumanStartServer:
         self._thread = None
         self._sock = None
         self._multiplayer_relay.stop()
+        self._loopback_relay.stop()
 
     def is_running(self) -> bool:
         thread = self._thread
@@ -103,6 +108,7 @@ class RemoteHumanStartServer:
             "last_pid": getattr(process, "pid", None) if process is not None else None,
             "last_process_running": bool(process is not None and process.poll() is None),
             "multiplayer_relay": self._multiplayer_relay.status(),
+            "multiplayer_loopback_relay": self._loopback_relay.status(),
             "last_status": dict(self._last_status),
         }
 
@@ -281,7 +287,13 @@ class RemoteHumanStartServer:
         if not response.get("ok"):
             return response
         if not bool(room.multiplayer_relay_enabled):
+            self._loopback_relay.stop()
             response["multiplayer_relay"] = {
+                "ok": True,
+                "running": False,
+                "skipped": "multiplayer_relay_disabled",
+            }
+            response["loopback_relay"] = {
                 "ok": True,
                 "running": False,
                 "skipped": "multiplayer_relay_disabled",
@@ -290,6 +302,7 @@ class RemoteHumanStartServer:
 
         peer_host = str(peer_host or select_room_connect_host(room) or "").strip()
         ports = derive_multiplayer_ports(room.start_port, room.multiplayer_relay_ports)
+        loopback_ports = derive_second_player_client_ports(room.start_port)
         bind_host = resolve_lan_bind_host(
             room.multiplayer_relay_bind_host,
             peer_host=peer_host,
@@ -304,10 +317,43 @@ class RemoteHumanStartServer:
         relay_result["selected_peer_host"] = peer_host
         relay_result["selected_bind_host"] = bind_host
         relay_result["selected_ports"] = ports
+
+        if peer_host:
+            loopback_result = self._loopback_relay.start(
+                bind_host="127.0.0.1",
+                ports=loopback_ports,
+                target_host=peer_host,
+                enable_tcp=True,
+                enable_udp=True,
+            )
+        else:
+            self._loopback_relay.stop()
+            loopback_result = {
+                "ok": False,
+                "running": False,
+                "error": "host_peer_missing",
+                "config": {
+                    "bind_host": "127.0.0.1",
+                    "target_host": "",
+                    "ports": loopback_ports,
+                    "enable_tcp": True,
+                    "enable_udp": True,
+                },
+            }
+        loopback_result["selected_peer_host"] = peer_host
+        loopback_result["selected_bind_host"] = "127.0.0.1"
+        loopback_result["selected_ports"] = loopback_ports
+
         response["multiplayer_relay"] = relay_result
-        if not relay_result.get("ok", False):
+        response["loopback_relay"] = loopback_result
+        if not relay_result.get("ok", False) or not loopback_result.get("ok", False):
             response["ok"] = False
-            response["error"] = relay_result.get("error") or "multiplayer_relay_failed"
+            errors = [
+                str(item.get("error") or "")
+                for item in (relay_result, loopback_result)
+                if isinstance(item, dict) and item.get("error")
+            ]
+            response["error"] = "; ".join(errors) or "multiplayer_relay_failed"
         return response
 
 
