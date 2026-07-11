@@ -471,12 +471,13 @@ def select_room_connect_host(room: LanRoom) -> str:
     proxy_host = _clean_connect_host(room.proxy_host)
     host_name = _clean_connect_host(room.host_name)
 
-    if _is_loopback_host(sender_ip):
+    #20260711_kpopmodder: Prefer the IP observed on the UDP broadcast packet.
+    # Stored proxy_host values can be stale when the active LAN/VPN interface
+    # changes between runs.
+    if sender_ip:
         return sender_ip
     if proxy_host and not _is_loopback_host(proxy_host):
         return proxy_host
-    if sender_ip:
-        return sender_ip
     if proxy_host:
         return proxy_host
     return host_name

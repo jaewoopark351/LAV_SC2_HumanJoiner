@@ -367,10 +367,12 @@ def scan_rooms(
     room = rooms[0]
     sc2_executable = _resolve_sc2_executable(sc2_path)
     logger.info(
-        "GUI selected first room; room_id=%s source_id=%s host=%s ports=%s sc2_executable=%s",
+        "GUI selected first room; room_id=%s source_id=%s effective_host=%s sender_ip=%s proxy_host=%s ports=%s sc2_executable=%s",
         room.room_id,
         room.source_id,
-        room.proxy_host or room.sender_ip or room.host_name,
+        select_room_connect_host(room),
+        room.sender_ip,
+        room.proxy_host,
         ",".join(str(port) for port in room.proxy_ports),
         sc2_executable or "not found",
     )
@@ -862,6 +864,9 @@ def _render_room_details(room: LanRoom, sc2_executable: object, title: str) -> s
             title,
             f"Room: {room.room_name}",
             f"Host: {host}",
+            f"Effective host: {host}",
+            f"Broadcast sender IP: {room.sender_ip or 'unknown'}",
+            f"Advertised proxy host: {room.proxy_host or 'not advertised'}",
             f"Bot: {room.preferred_bot}",
             f"Map: {room.preferred_map}",
             f"Map file: {room.map_file_name or 'not advertised'}",

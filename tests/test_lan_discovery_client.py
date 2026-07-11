@@ -13,6 +13,7 @@ from sc2_lan_discovery_client import (
     LanRoomRegistry,
     LanScanDiagnostics,
     parse_lav_lan_room_payload,
+    select_room_connect_host,
 )
 
 
@@ -81,6 +82,15 @@ class ParseLavLanRoomPayloadTest(unittest.TestCase):
     def test_rejects_non_integer_proxy_port(self) -> None:
         with self.assertRaises(LanRoomPayloadError):
             parse_lav_lan_room_payload(sample_payload(proxy_ports=[5677, "5678"]), received_at=100.0)
+
+    def test_connect_host_prefers_observed_sender_ip_over_stale_proxy_host(self) -> None:
+        room = parse_lav_lan_room_payload(
+            sample_payload(proxy_host="26.189.202.71"),
+            received_at=100.0,
+            sender_ip="192.168.0.26",
+        )
+
+        self.assertEqual("192.168.0.26", select_room_connect_host(room))
 
 
 class LanRoomRegistryTest(unittest.TestCase):
