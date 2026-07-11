@@ -31,6 +31,7 @@ from sc2_lan_discovery_client import (
     DEFAULT_DISCOVERY_PORT,
     DEFAULT_JOIN_PORT,
     DEFAULT_HUMAN_CLIENT_PORT,
+    DEFAULT_REMOTE_START_PORT,
     DEFAULT_SCAN_SECONDS,
     LAV_LAN_ROOM_PROTOCOL,
     LAV_LAN_ROOM_VERSION,
@@ -42,6 +43,7 @@ from sc2_lan_discovery_client import (
     send_lobby_join,
 )
 from sc2_path_finder import find_sc2_executable
+from sc2_remote_start_server import RemoteHumanStartServer
 
 
 INSTALL_HELP = (
@@ -53,6 +55,7 @@ DEFAULT_GUI_HOST = "127.0.0.1"
 DEFAULT_GUI_PORT = 47860
 
 logger = logging.getLogger(__name__)
+_REMOTE_START_SERVER = RemoteHumanStartServer(port=DEFAULT_REMOTE_START_PORT, logger=logger)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -183,7 +186,7 @@ def build_app(gr: Any) -> Any:
         )
         join_lobby_button.click(
             fn=join_selected_lobby,
-            inputs=[room_choice, lobby_player_name, state],
+            inputs=[room_choice, lobby_player_name, state, sc2_executable_path],
             outputs=[status, lobby_status, state],
         )
         join_button.click(
@@ -417,6 +420,7 @@ def join_selected_lobby(
     selected_label: str | None,
     player_name: object,
     state: dict[str, Any],
+    sc2_path: object = "",
 ) -> tuple[str, str, dict[str, Any]]:
     room = _selected_room(selected_label, state)
     if room is None:
@@ -437,7 +441,9 @@ def join_selected_lobby(
         return "Lobby join failed.", lobby_status, state or {}
 
     logger.info("GUI lobby join accepted; room_id=%s client_id=%s", room.room_id, result.client_id)
-    return "Lobby join accepted. Wait for the host to press Start Game / Ladder Proxy.", lobby_status, _state_with_joined_room(state, room, result)
+    listener_status = _start_remote_start_listener(room, sc2_path)
+    status = "Lobby join accepted. Host can now press Start Game / Ladder Proxy."
+    return status, "\n".join([lobby_status, "", listener_status]), _state_with_joined_room(state, room, result)
 
 
 def join_selected_room(
@@ -594,16 +600,13 @@ def join_manual_lobby(
         target_port=room.join_port or DEFAULT_JOIN_PORT,
     )
     lobby_status = _render_lobby_join_result(result)
-    status = (
-        "Manual lobby join accepted. Wait for the host to press Start Game / Ladder Proxy."
-        if result.ok
-        else "Manual lobby join failed."
-    )
+    listener_status = _start_remote_start_listener(room, sc2_path) if result.ok else ""
+    status = "Manual lobby join accepted. Host can now press Start Game / Ladder Proxy." if result.ok else "Manual lobby join failed."
     return (
         _render_room_details(room, sc2_executable, "Manual LAV StarCraft II target"),
         _render_launch_preview(room, sc2_executable),
         status,
-        lobby_status,
+        "\n".join([lobby_status, "", listener_status]).rstrip(),
         _state_with_joined_room(_state_with_manual_room(state, room), room, result) if result.ok else _state_with_manual_room(state, room),
     )
 
@@ -667,9 +670,29 @@ def _manual_room_from_inputs(
             start_port=start_port,
             join_port=join_port,
             human_client_port=DEFAULT_HUMAN_CLIENT_PORT,
+            remote_start_port=DEFAULT_REMOTE_START_PORT,
         ),
         "",
     )
+
+
+def _start_remote_start_listener(room: LanRoom, sc2_path: object = "") -> str:
+    sc2_executable = _resolve_sc2_executable(sc2_path)
+    desired_port = room.remote_start_port if room.remote_start_port is not None else DEFAULT_REMOTE_START_PORT
+    if _REMOTE_START_SERVER.port != desired_port:
+        _REMOTE_START_SERVER.stop()
+        _REMOTE_START_SERVER.port = desired_port
+    result = _REMOTE_START_SERVER.start(room, sc2_executable)
+    logger.info("Remote start listener status: %s", result)
+    lines = [
+        "Remote start listener",
+        f"Listen: {result.get('bind_host', '0.0.0.0')}:{result.get('port', DEFAULT_REMOTE_START_PORT)}",
+        f"Room: {result.get('room_id', room.room_id)}",
+        f"SC2 executable: {sc2_executable or 'not found'}",
+    ]
+    if sc2_executable is None:
+        lines.append("Set a valid SC2_x64.exe path before the host starts the game.")
+    return "\n".join(lines)
 
 
 def _state_with_manual_room(state: dict[str, Any], room: LanRoom | None) -> dict[str, Any]:
@@ -780,6 +803,7 @@ def _render_room_details(room: LanRoom, sc2_executable: object, title: str) -> s
             f"Start port: {room.start_port if room.start_port is not None else ''}",
             f"Join port: {room.join_port if room.join_port is not None else DEFAULT_JOIN_PORT}",
             f"Human SC2 API port: {room.human_client_port if room.human_client_port is not None else DEFAULT_HUMAN_CLIENT_PORT}",
+            f"Remote start port: {room.remote_start_port if room.remote_start_port is not None else DEFAULT_REMOTE_START_PORT}",
             f"SC2 executable: {sc2_executable or 'not found'}",
         ]
     )
@@ -819,6 +843,8 @@ def _render_launch_preview(room: LanRoom, sc2_executable: object) -> str:
             lines.append(f"  {probe_host}:{port}")
     else:
         lines.append("  <proxy host or ports missing>")
+    lines.append("Remote start listener after Join Lobby:")
+    lines.append(f"  0.0.0.0:{room.remote_start_port if room.remote_start_port is not None else DEFAULT_REMOTE_START_PORT}")
     return "\n".join(lines)
 
 
@@ -832,6 +858,8 @@ def _render_no_room_preview(sc2_executable: object) -> str:
             "TCP probe targets before join:",
             f"  {DEFAULT_MANUAL_HOST}:5677",
             f"  {DEFAULT_MANUAL_HOST}:5678",
+            "Remote start listener after Join Lobby:",
+            f"  0.0.0.0:{DEFAULT_REMOTE_START_PORT}",
         ]
     )
 

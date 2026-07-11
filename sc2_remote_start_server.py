@@ -1,0 +1,232 @@
+#20260628_kpopmodder: Added a narrow remote-human start listener for Host-driven LAN lobby launches.
+from __future__ import annotations
+
+import json
+import logging
+import socket
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+from sc2_join_launcher import build_launch_plan, human_client_port, human_slot_room, launch_sc2
+from sc2_lan_discovery_client import (
+    DEFAULT_HUMAN_CLIENT_PORT,
+    DEFAULT_REMOTE_START_PORT,
+    LAV_LAN_ROOM_PROTOCOL,
+    LAV_LAN_ROOM_VERSION,
+    LAV_REMOTE_HUMAN_START_ACK_PROTOCOL,
+    LAV_REMOTE_HUMAN_START_PROTOCOL,
+    LAV_REMOTE_HUMAN_START_VERSION,
+    LanRoom,
+)
+
+
+class RemoteHumanStartServer:
+    def __init__(
+        self,
+        *,
+        bind_host: str = "",
+        port: int = DEFAULT_REMOTE_START_PORT,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self.bind_host = str(bind_host or "")
+        self.port = _valid_port(port, DEFAULT_REMOTE_START_PORT)
+        self.logger = logger or logging.getLogger(__name__)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._sock: socket.socket | None = None
+        self._lock = threading.Lock()
+        self._room: LanRoom | None = None
+        self._sc2_executable: Path | None = None
+        self._last_process = None
+        self._last_status: dict[str, Any] = {"running": False}
+
+    def start(self, room: LanRoom, sc2_executable: Path | None) -> dict[str, Any]:
+        with self._lock:
+            self._room = room
+            self._sc2_executable = sc2_executable
+            if self.is_running():
+                self._last_status = self.status()
+                return self._last_status
+            self._stop.clear()
+            self._thread = threading.Thread(
+                target=self._listen_loop,
+                name="RemoteHumanStartServer.listen",
+                daemon=True,
+            )
+            self._thread.start()
+            self._last_status = self.status()
+            return self._last_status
+
+    def stop(self) -> None:
+        self._stop.set()
+        sock = self._sock
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+        self._thread = None
+        self._sock = None
+
+    def is_running(self) -> bool:
+        thread = self._thread
+        return bool(thread is not None and thread.is_alive())
+
+    def status(self) -> dict[str, Any]:
+        process = self._last_process
+        room = self._room
+        return {
+            "running": self.is_running(),
+            "bind_host": self.bind_host or "0.0.0.0",
+            "port": self.port,
+            "room_id": room.room_id if room is not None else "",
+            "sc2_executable": str(self._sc2_executable or ""),
+            "last_pid": getattr(process, "pid", None) if process is not None else None,
+            "last_process_running": bool(process is not None and process.poll() is None),
+            "last_status": dict(self._last_status),
+        }
+
+    def _listen_loop(self) -> None:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((self.bind_host, self.port))
+                sock.listen(5)
+                sock.settimeout(0.5)
+                self._sock = sock
+                self.logger.info(
+                    "Remote human start listener ready; bind_host=%s port=%s",
+                    self.bind_host or "0.0.0.0",
+                    self.port,
+                )
+                while not self._stop.is_set():
+                    try:
+                        conn, address = sock.accept()
+                    except socket.timeout:
+                        continue
+                    except OSError as exc:
+                        if not self._stop.is_set():
+                            self.logger.warning("Remote start listener accept failed: %s", exc)
+                        break
+                    with conn:
+                        self._handle_connection(conn, address)
+        except OSError as exc:
+            self._last_status = {"running": False, "ok": False, "error": str(exc)}
+            self.logger.warning("Remote human start listener failed: %s", exc)
+        finally:
+            self._sock = None
+
+    def _handle_connection(self, conn: socket.socket, address: tuple[str, int]) -> None:
+        response = self._handle_request(_recv_json_object(conn), address)
+        data = json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        try:
+            conn.sendall(data)
+        except OSError as exc:
+            self.logger.warning("Remote start ack failed: %s", exc)
+
+    def _handle_request(self, payload: dict[str, Any], address: tuple[str, int]) -> dict[str, Any]:
+        if payload.get("protocol") != LAV_REMOTE_HUMAN_START_PROTOCOL:
+            return _ack(False, error="unsupported_protocol")
+        if payload.get("version") != LAV_REMOTE_HUMAN_START_VERSION:
+            return _ack(False, error="unsupported_version")
+
+        with self._lock:
+            room = self._room
+            sc2_executable = self._sc2_executable
+            process = self._last_process
+
+        if room is None:
+            return _ack(False, error="remote_start_room_missing")
+        requested_room_id = str(payload.get("room_id") or "").strip()
+        if requested_room_id and requested_room_id != room.room_id:
+            return _ack(False, error="room_id_mismatch", room_id=room.room_id)
+        if sc2_executable is None or not sc2_executable.is_file():
+            return _ack(False, error="sc2_executable_missing", room_id=room.room_id)
+
+        port = human_client_port(room)
+        if process is not None and process.poll() is None and _wait_for_port(port, timeout_sec=1.0):
+            return _ack(True, room_id=room.room_id, pid=process.pid, human_client_port=port, message="already_ready")
+
+        try:
+            plan = build_launch_plan(human_slot_room(room), sc2_executable)
+            process = launch_sc2(plan)
+        except Exception as exc:
+            response = _ack(False, error=str(exc), room_id=room.room_id)
+            self._last_status = response
+            return response
+
+        with self._lock:
+            self._last_process = process
+
+        ready = _wait_for_port(port, timeout_sec=_request_timeout(payload, 30.0), process=process)
+        response = _ack(
+            ready,
+            error="" if ready else "human_sc2_api_port_not_ready",
+            room_id=room.room_id,
+            pid=getattr(process, "pid", None),
+            human_client_port=port,
+            peer=f"{address[0]}:{address[1]}",
+        )
+        self._last_status = response
+        self.logger.info("Remote start request handled; response=%s", response)
+        return response
+
+
+def _recv_json_object(conn: socket.socket) -> dict[str, Any]:
+    chunks: list[bytes] = []
+    conn.settimeout(5.0)
+    while True:
+        chunk = conn.recv(8192)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    try:
+        data = json.loads(b"".join(chunks).decode("utf-8", errors="replace"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _wait_for_port(port: int, *, timeout_sec: float, process: Any = None) -> bool:
+    deadline = time.monotonic() + max(0.1, float(timeout_sec or 0.1))
+    while time.monotonic() < deadline:
+        if process is not None and process.poll() is not None:
+            return False
+        try:
+            with socket.create_connection(("127.0.0.1", int(port)), timeout=0.5):
+                return True
+        except OSError:
+            time.sleep(0.25)
+    return False
+
+
+def _ack(ok: bool, **values: Any) -> dict[str, Any]:
+    response = {
+        "protocol": LAV_REMOTE_HUMAN_START_ACK_PROTOCOL,
+        "version": LAV_REMOTE_HUMAN_START_VERSION,
+        "ok": bool(ok),
+        "timestamp": time.time(),
+    }
+    response.update(values)
+    return response
+
+
+def _request_timeout(payload: dict[str, Any], default: float) -> float:
+    try:
+        value = float(payload.get("ready_timeout_sec", default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _valid_port(value: Any, default: int) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return default
+    return port if 0 < port <= 65535 else default

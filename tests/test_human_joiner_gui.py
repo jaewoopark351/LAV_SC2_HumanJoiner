@@ -10,6 +10,7 @@ from sc2_join_launcher import PortCheck
 from sc2_lan_discovery_client import (
     DEFAULT_HUMAN_CLIENT_PORT,
     DEFAULT_JOIN_PORT,
+    DEFAULT_REMOTE_START_PORT,
     LAV_LAN_ROOM_PROTOCOL,
     LAV_LAN_ROOM_VERSION,
     LanRoom,
@@ -31,6 +32,7 @@ def sample_room() -> LanRoom:
         start_port=5690,
         join_port=DEFAULT_JOIN_PORT,
         human_client_port=DEFAULT_HUMAN_CLIENT_PORT,
+        remote_start_port=DEFAULT_REMOTE_START_PORT,
     )
 
 
@@ -250,17 +252,23 @@ class HumanJoinerGuiTest(unittest.TestCase):
             ack={"message": "joined", "joined_count": 1},
         )
 
-        with patch("human_joiner_gui.send_lobby_join", return_value=result) as send_lobby_join:
+        with (
+            patch("human_joiner_gui.send_lobby_join", return_value=result) as send_lobby_join,
+            patch("human_joiner_gui._start_remote_start_listener", return_value="Remote start listener\nListen: 0.0.0.0:47626") as start_listener,
+        ):
             status, lobby_status, new_state = human_joiner_gui.join_selected_lobby(
                 "room label",
                 "Tester",
                 state,
+                r"C:\SC2\SC2_x64.exe",
             )
 
         send_lobby_join.assert_called_once()
         self.assertEqual(send_lobby_join.call_args.kwargs["player_name"], "Tester")
+        start_listener.assert_called_once()
         self.assertIn("Lobby join accepted", status)
         self.assertIn("Accepted: True", lobby_status)
+        self.assertIn("Remote start listener", lobby_status)
         self.assertEqual(new_state["joined_room"], room)
 
     def test_join_manual_room_launches_remote_human_listener_without_proxy_check(self) -> None:

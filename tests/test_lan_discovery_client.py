@@ -5,6 +5,7 @@ import unittest
 
 from sc2_lan_discovery_client import (
     DEFAULT_JOIN_PORT,
+    DEFAULT_REMOTE_START_PORT,
     LAV_LAN_ROOM_PROTOCOL,
     LAV_LAN_ROOM_VERSION,
     LanRoomPayloadError,
@@ -31,6 +32,7 @@ def sample_payload(**overrides: object) -> str:
         "start_port": 5690,
         "join_port": DEFAULT_JOIN_PORT,
         "human_client_port": 5679,
+        "remote_start_port": DEFAULT_REMOTE_START_PORT,
         "room_state": "waiting",
         "timestamp": 0,
         "expires_sec": 10,
@@ -52,6 +54,7 @@ class ParseLavLanRoomPayloadTest(unittest.TestCase):
         self.assertEqual(room.start_port, 5690)
         self.assertEqual(room.join_port, DEFAULT_JOIN_PORT)
         self.assertEqual(room.human_client_port, 5679)
+        self.assertEqual(room.remote_start_port, DEFAULT_REMOTE_START_PORT)
         self.assertEqual(room.room_state, "waiting")
         self.assertEqual(room.last_seen, 100.0)
         self.assertEqual(room.sender_ip, "192.168.0.67")
