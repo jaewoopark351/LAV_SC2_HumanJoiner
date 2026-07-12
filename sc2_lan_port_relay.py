@@ -14,6 +14,7 @@ DEFAULT_SC2_MULTIPLAYER_START_PORT = 5690
 DEFAULT_SC2_MULTIPLAYER_RELAY_SPAN = 5
 LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT = "role-server-peer-client"
 LAN_PORT_LAYOUT_SWAPPED = "swapped"
+LAN_PORT_LAYOUT_HOST_SERVER_REMOTE_CLIENT = "host-server-remote-client"
 LOOPBACK_TARGET_HOST = "127.0.0.1"
 WINDOWS_UDP_CONNRESET_ERRNO = 10054
 SIO_UDP_CONNRESET = getattr(socket, "SIO_UDP_CONNRESET", 0x9800000C)
@@ -70,8 +71,11 @@ def derive_player_server_ports(
     #20260712_kpopmodder: Keep HumanJoiner relay layout in lockstep with
     # LavLanSc2LadderServer's diagnostic JoinGame port contract.
     role_name = _normalize_lan_player_role(role)
-    if normalize_lan_port_layout(layout) == LAN_PORT_LAYOUT_SWAPPED:
+    layout_name = normalize_lan_port_layout(layout)
+    if layout_name == LAN_PORT_LAYOUT_SWAPPED:
         role_name = _peer_lan_player_role(role_name)
+    elif layout_name == LAN_PORT_LAYOUT_HOST_SERVER_REMOTE_CLIENT:
+        role_name = "second"
     return _canonical_player_server_ports(start_port, role_name)
 
 
@@ -82,8 +86,11 @@ def derive_player_client_ports(
 ) -> list[int]:
     role_name = _normalize_lan_player_role(role)
     peer_role = _peer_lan_player_role(role_name)
-    if normalize_lan_port_layout(layout) == LAN_PORT_LAYOUT_SWAPPED:
+    layout_name = normalize_lan_port_layout(layout)
+    if layout_name == LAN_PORT_LAYOUT_SWAPPED:
         peer_role = role_name
+    elif layout_name == LAN_PORT_LAYOUT_HOST_SERVER_REMOTE_CLIENT:
+        peer_role = "first"
     return _canonical_player_server_ports(start_port, peer_role)
 
 
@@ -100,6 +107,13 @@ def normalize_lan_port_layout(
         "swapped-server-client",
     }:
         return LAN_PORT_LAYOUT_SWAPPED
+    if text in {
+        "host-server-remote-client",
+        "host-server",
+        "host-owned-server",
+        "host-server-remote",
+    }:
+        return LAN_PORT_LAYOUT_HOST_SERVER_REMOTE_CLIENT
     return LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT
 
 
