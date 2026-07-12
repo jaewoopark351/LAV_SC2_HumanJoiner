@@ -19,6 +19,7 @@ DEFAULT_SCAN_SECONDS = 10.0
 DEFAULT_SOCKET_TIMEOUT_SECONDS = 0.5
 DEFAULT_ROOM_TTL_SECONDS = 10.0
 DEFAULT_MAX_PACKET_EVENTS = 20
+DEFAULT_LAN_PORT_LAYOUT = "s2client-api-shared"
 LAV_LAN_ROOM_PROTOCOL = "lav.sc2.lan_room"
 LAV_LAN_ROOM_VERSION = 1
 LAV_LOBBY_JOIN_PROTOCOL = "lav.sc2.lobby_join"
@@ -54,7 +55,7 @@ class LanRoom:
     human_client_port: int | None = None
     remote_start_port: int | None = None
     lan_connect_mode: str = "relay"
-    lan_port_layout: str = "role-server-peer-client"
+    lan_port_layout: str = DEFAULT_LAN_PORT_LAYOUT
     multiplayer_relay_enabled: bool = True
     multiplayer_relay_bind_host: str = ""
     multiplayer_relay_ports: list[int] = field(default_factory=list)
@@ -233,7 +234,7 @@ def parse_lav_lan_room_payload(
         remote_start_port=_optional_integer(data, "remote_start_port"),
         lan_connect_mode=_optional_string(data, "lan_connect_mode") or "relay",
         lan_port_layout=_optional_string(data, "lan_port_layout")
-        or "role-server-peer-client",
+        or DEFAULT_LAN_PORT_LAYOUT,
         multiplayer_relay_enabled=_optional_bool(
             data,
             "multiplayer_relay_enabled",
@@ -420,21 +421,80 @@ def send_lobby_join(
         "timestamp": time.time(),
     }
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    tcp_error = ""
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(max(0.1, float(timeout_sec or 2.0)))
-            sock.sendto(data, (host, port))
-            ack_data, _ = sock.recvfrom(8192)
+        ack_data = _send_lobby_join_tcp(host, port, data, timeout_sec)
     except OSError as exc:
+        tcp_error = str(exc)
+    else:
+        return _parse_lobby_join_ack(
+            ack_data,
+            host=host,
+            port=port,
+            room_id=room.room_id,
+            client_id=request_client_id,
+        )
+
+    try:
+        ack_data = _send_lobby_join_udp(host, port, data, timeout_sec)
+    except OSError as exc:
+        error = str(exc)
+        if tcp_error:
+            error = f"tcp: {tcp_error}; udp: {error}"
         return LobbyJoinResult(
             ok=False,
             target_host=host,
             target_port=port,
             room_id=room.room_id,
             client_id=request_client_id,
-            error=str(exc),
+            error=error,
         )
 
+    return _parse_lobby_join_ack(
+        ack_data,
+        host=host,
+        port=port,
+        room_id=room.room_id,
+        client_id=request_client_id,
+    )
+
+
+def _send_lobby_join_tcp(host: str, port: int, data: bytes, timeout_sec: float) -> bytes:
+    timeout = max(0.1, float(timeout_sec or 2.0))
+    with socket.create_connection((host, port), timeout=timeout) as sock:
+        sock.settimeout(timeout)
+        sock.sendall(data)
+        try:
+            sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+        chunks = []
+        while True:
+            chunk = sock.recv(8192)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            if len(chunk) < 8192:
+                break
+        return b"".join(chunks)
+
+
+def _send_lobby_join_udp(host: str, port: int, data: bytes, timeout_sec: float) -> bytes:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(max(0.1, float(timeout_sec or 2.0)))
+        sock.sendto(data, (host, port))
+        ack_data, _ = sock.recvfrom(8192)
+        return ack_data
+
+
+def _parse_lobby_join_ack(
+    ack_data: bytes,
+    *,
+    host: str,
+    port: int,
+    room_id: str,
+    client_id: str,
+) -> LobbyJoinResult:
     try:
         ack = _load_json_object(ack_data)
     except LanRoomPayloadError as exc:
@@ -442,8 +502,8 @@ def send_lobby_join(
             ok=False,
             target_host=host,
             target_port=port,
-            room_id=room.room_id,
-            client_id=request_client_id,
+            room_id=room_id,
+            client_id=client_id,
             error=f"invalid join ack: {exc}",
         )
     if ack.get("protocol") != LAV_LOBBY_JOIN_ACK_PROTOCOL:
@@ -451,8 +511,8 @@ def send_lobby_join(
             ok=False,
             target_host=host,
             target_port=port,
-            room_id=room.room_id,
-            client_id=request_client_id,
+            room_id=room_id,
+            client_id=client_id,
             ack=ack,
             error="unsupported join ack protocol",
         )
@@ -460,8 +520,8 @@ def send_lobby_join(
         ok=bool(ack.get("ok")),
         target_host=host,
         target_port=port,
-        room_id=room.room_id,
-        client_id=request_client_id,
+        room_id=room_id,
+        client_id=client_id,
         ack=ack,
         error="" if bool(ack.get("ok")) else str(ack.get("message") or "join rejected"),
     )

@@ -15,6 +15,7 @@ DEFAULT_SC2_MULTIPLAYER_RELAY_SPAN = 5
 LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT = "role-server-peer-client"
 LAN_PORT_LAYOUT_SWAPPED = "swapped"
 LAN_PORT_LAYOUT_HOST_SERVER_REMOTE_CLIENT = "host-server-remote-client"
+LAN_PORT_LAYOUT_S2CLIENT_API_SHARED = "s2client-api-shared"
 LOOPBACK_TARGET_HOST = "127.0.0.1"
 WINDOWS_UDP_CONNRESET_ERRNO = 10054
 SIO_UDP_CONNRESET = getattr(socket, "SIO_UDP_CONNRESET", 0x9800000C)
@@ -76,6 +77,8 @@ def derive_player_server_ports(
         role_name = _peer_lan_player_role(role_name)
     elif layout_name == LAN_PORT_LAYOUT_HOST_SERVER_REMOTE_CLIENT:
         role_name = "second"
+    elif layout_name == LAN_PORT_LAYOUT_S2CLIENT_API_SHARED:
+        role_name = "first"
     return _canonical_player_server_ports(start_port, role_name)
 
 
@@ -91,13 +94,18 @@ def derive_player_client_ports(
         peer_role = role_name
     elif layout_name == LAN_PORT_LAYOUT_HOST_SERVER_REMOTE_CLIENT:
         peer_role = "first"
+    elif layout_name == LAN_PORT_LAYOUT_S2CLIENT_API_SHARED:
+        peer_role = "second"
     return _canonical_player_server_ports(start_port, peer_role)
 
 
 def normalize_lan_port_layout(
-    value: Any = LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT,
+    value: Any = LAN_PORT_LAYOUT_S2CLIENT_API_SHARED,
 ) -> str:
-    text = str(value or "").strip().lower().replace("_", "-")
+    raw_text = str(value or "").strip()
+    if not raw_text:
+        return LAN_PORT_LAYOUT_S2CLIENT_API_SHARED
+    text = raw_text.lower().replace("_", "-")
     if text in {
         "swapped",
         "swap",
@@ -114,6 +122,15 @@ def normalize_lan_port_layout(
         "host-server-remote",
     }:
         return LAN_PORT_LAYOUT_HOST_SERVER_REMOTE_CLIENT
+    if text in {
+        "s2client-api",
+        "s2client-api-shared",
+        "official",
+        "official-shared",
+        "official-shared-ports",
+        "shared-ports",
+    }:
+        return LAN_PORT_LAYOUT_S2CLIENT_API_SHARED
     return LAN_PORT_LAYOUT_ROLE_SERVER_PEER_CLIENT
 
 

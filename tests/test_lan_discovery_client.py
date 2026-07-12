@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import json
+import socket
+import threading
 import unittest
 
 from sc2_lan_discovery_client import (
     DEFAULT_JOIN_PORT,
     DEFAULT_MAP_DOWNLOAD_PORT,
     DEFAULT_REMOTE_START_PORT,
+    LAV_LOBBY_JOIN_ACK_PROTOCOL,
     LAV_LAN_ROOM_PROTOCOL,
     LAV_LAN_ROOM_VERSION,
     LanRoomPayloadError,
     LanRoomRegistry,
     LanScanDiagnostics,
     parse_lav_lan_room_payload,
+    send_lobby_join,
     select_room_connect_host,
 )
 
@@ -70,6 +74,16 @@ class ParseLavLanRoomPayloadTest(unittest.TestCase):
         self.assertEqual(room.room_state, "waiting")
         self.assertEqual(room.last_seen, 100.0)
         self.assertEqual(room.sender_ip, "192.168.0.67")
+        self.assertEqual(room.lan_port_layout, "s2client-api-shared")
+
+    def test_parses_advertised_s2client_api_layout(self) -> None:
+        room = parse_lav_lan_room_payload(
+            sample_payload(lan_port_layout="s2client-api-shared"),
+            received_at=100.0,
+            sender_ip="192.168.0.67",
+        )
+
+        self.assertEqual(room.lan_port_layout, "s2client-api-shared")
 
     def test_rejects_wrong_protocol(self) -> None:
         with self.assertRaises(LanRoomPayloadError):
@@ -145,6 +159,113 @@ class LanScanDiagnosticsTest(unittest.TestCase):
         self.assertEqual(diagnostics.packet_events[1].parse_result, "OK")
         self.assertTrue(diagnostics.started_at)
         self.assertTrue(diagnostics.ended_at)
+
+
+class LobbyJoinTest(unittest.TestCase):
+    def test_send_lobby_join_prefers_tcp_ack(self) -> None:
+        room = parse_lav_lan_room_payload(sample_payload(), received_at=100.0, sender_ip="127.0.0.1")
+        port = free_tcp_port()
+        received_payloads: list[dict[str, object]] = []
+        thread = threading.Thread(
+            target=tcp_join_ack_server,
+            args=(port, received_payloads),
+            daemon=True,
+        )
+        thread.start()
+
+        result = send_lobby_join(
+            room,
+            player_name="Tester",
+            timeout_sec=2.0,
+            client_id="client-1",
+            target_host="127.0.0.1",
+            target_port=port,
+        )
+        thread.join(timeout=2.0)
+
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual("client-1", result.client_id)
+        self.assertEqual("Tester", received_payloads[0]["player_name"])
+        self.assertEqual("s2client-api-shared", received_payloads[0]["lan_port_layout"])
+
+    def test_send_lobby_join_falls_back_to_udp_ack(self) -> None:
+        room = parse_lav_lan_room_payload(sample_payload(), received_at=100.0, sender_ip="127.0.0.1")
+        port = free_udp_port()
+        received_payloads: list[dict[str, object]] = []
+        thread = threading.Thread(
+            target=udp_join_ack_server,
+            args=(port, received_payloads),
+            daemon=True,
+        )
+        thread.start()
+
+        result = send_lobby_join(
+            room,
+            player_name="Tester",
+            timeout_sec=2.0,
+            client_id="client-udp",
+            target_host="127.0.0.1",
+            target_port=port,
+        )
+        thread.join(timeout=2.0)
+
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual("client-udp", result.client_id)
+        self.assertEqual("Tester", received_payloads[0]["player_name"])
+        self.assertEqual("s2client-api-shared", received_payloads[0]["lan_port_layout"])
+
+
+def tcp_join_ack_server(port: int, received_payloads: list[dict[str, object]]) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", port))
+        server.listen(1)
+        conn, _ = server.accept()
+        with conn:
+            chunks = []
+            while True:
+                chunk = conn.recv(8192)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                if len(chunk) < 8192:
+                    break
+            payload = json.loads(b"".join(chunks).decode("utf-8"))
+            received_payloads.append(payload)
+            conn.sendall(join_ack(payload))
+
+
+def udp_join_ack_server(port: int, received_payloads: list[dict[str, object]]) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
+        server.bind(("127.0.0.1", port))
+        data, address = server.recvfrom(8192)
+        payload = json.loads(data.decode("utf-8"))
+        received_payloads.append(payload)
+        server.sendto(join_ack(payload), address)
+
+
+def join_ack(payload: dict[str, object]) -> bytes:
+    return json.dumps(
+        {
+            "protocol": LAV_LOBBY_JOIN_ACK_PROTOCOL,
+            "version": 1,
+            "ok": True,
+            "message": "joined",
+            "client_id": payload.get("client_id", ""),
+        }
+    ).encode("utf-8")
+
+
+def free_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def free_udp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 if __name__ == "__main__":
